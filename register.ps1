@@ -9,15 +9,22 @@
 #   powershell -ExecutionPolicy Bypass -File "C:\minutes\register.ps1"
 #   powershell -ExecutionPolicy Bypass -File "C:\minutes\register.ps1" -Path "C:\minutes\work\minutes.md"
 #   powershell -ExecutionPolicy Bypass -File "C:\minutes\register.ps1" -DryRun
+#   powershell -ExecutionPolicy Bypass -File "C:\minutes\register.ps1" -Force   # skip confirm (automation)
 #
-# Config (secrets/IDs are NOT stored in the repo): C:\minutes\backlog.config.txt
+# A real registration to the shared ALL space is confirmed interactively unless
+# -Force is given. This account can add but not delete, so an accidental post
+# needs an admin to remove - hence the confirm gate.
+#
+# Config: C:\minutes\backlog.config.txt
+# (Shared non-secret IDs may be distributed via backlog.config.sample.txt;
+#  API keys are NEVER stored in the repo or the config file.)
 #   Space=example.backlog.com     # your space host (.backlog.com or .backlog.jp)
 #   ProjectId=12345               # numeric id of the target project (ALL)
 #   ParentId=019f3bd8...          # parent document id, string from the doc URL (required)
 #   AddLast=true                  # add as the last sibling (optional)
-#   ApiKey=...                    # optional here; env var BACKLOG_API_KEY wins
 # If the file is missing, a starter is created and the script stops.
-# The API key is best supplied via the BACKLOG_API_KEY environment variable.
+# The API key is supplied ONLY via the BACKLOG_API_KEY environment variable;
+# any ApiKey written in the config file is ignored (with a warning).
 #
 # Title: taken from -Title, else the first H1 (# ...) in the Markdown,
 #        else the file name. Convention: YYYYMMDD_<name>_gijiroku.
@@ -29,7 +36,8 @@
 param(
     [string]$Path  = "",
     [string]$Title = "",
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Force
 )
 
 try { chcp 65001 > $null } catch {}
@@ -52,6 +60,26 @@ function Read-KV($p) {
         }
     }
     return $h
+}
+
+# Normalize a title for comparison: trim + Unicode NFC (Japanese-safe).
+function Normalize-Title($s) {
+    if ($s -eq $null) { return "" }
+    return ([string]$s).Trim().Normalize([System.Text.NormalizationForm]::FormC)
+}
+
+# Recursively find a document node by id within a Backlog document tree
+# (nodes have id / name / children[]). Handles a single node or an array.
+function Find-DocNode($node, $id) {
+    foreach ($n in @($node)) {
+        if ($n -eq $null) { continue }
+        if ([string]$n.id -eq [string]$id) { return $n }
+        if ($n.children) {
+            $found = Find-DocNode $n.children $id
+            if ($found -ne $null) { return $found }
+        }
+    }
+    return $null
 }
 
 # Percent-encode one value as application/x-www-form-urlencoded (UTF-8).
@@ -116,9 +144,7 @@ if (-not (Test-Path $configPath)) {
         "ProjectId=",
         "ParentId=",
         "AddLast=true",
-        "# ApiKey is best set as the BACKLOG_API_KEY environment variable.",
-        "# You may also put it below, but do NOT commit this file.",
-        "ApiKey="
+        "# Set your API key via the BACKLOG_API_KEY environment variable (do not put it here)."
     ) -join "`r`n"
     [System.IO.File]::WriteAllText($configPath, $starter, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "[NOTE] Created config: $configPath" -ForegroundColor Yellow
@@ -133,13 +159,10 @@ $projectId= if ($cfg.ContainsKey("projectid")) { $cfg["projectid"] } else { "" }
 $parentId = if ($cfg.ContainsKey("parentid"))  { $cfg["parentid"] }  else { "" }
 $addLast  = if ($cfg.ContainsKey("addlast"))   { $cfg["addlast"] }   else { "true" }
 
-# API key: environment variable wins over the config file.
+# API key: environment variable ONLY. A key written in the config file is
+# ignored (and warned about) so a secret never lives in a file.
 $apiKey = if ($env:BACKLOG_API_KEY -ne $null) { $env:BACKLOG_API_KEY.Trim() } else { "" }
-$apiKeyFromConfig = $false
-if ([string]::IsNullOrWhiteSpace($apiKey) -and $cfg.ContainsKey("apikey") -and $cfg["apikey"] -ne "") {
-    $apiKey = $cfg["apikey"]
-    $apiKeyFromConfig = $true
-}
+$apiKeyInConfig = ($cfg.ContainsKey("apikey") -and $cfg["apikey"] -ne "")
 
 # --- 4) Preview / validate ------------------------------------------
 Write-Host ""
@@ -151,7 +174,7 @@ Write-Host ("  ProjectId : " + $projectId)
 Write-Host ("  ParentId  : " + $(if ($parentId -ne "") { $parentId } else { "(none)" }))
 Write-Host ("  Body      : " + $content.Length + " chars")
 Write-Host ("  ApiKey    : " + $(if ($apiKey) { "set" } else { "NOT set" }))
-if ($apiKeyFromConfig) { Write-Host "[WARN] ApiKey read from config - prefer the BACKLOG_API_KEY env var, and never commit the config file." -ForegroundColor Yellow }
+if ($apiKeyInConfig) { Write-Host "[WARN] ApiKey in config is IGNORED - set the BACKLOG_API_KEY env var instead, and remove it from the config." -ForegroundColor Yellow }
 
 # Force a dry run if anything required is missing/invalid, so the skeleton is
 # testable now and a mistyped config cannot send the key to the wrong host.
@@ -159,16 +182,57 @@ $missing = @()
 if ($space -eq "" -or $space -eq "example.backlog.com" -or
     $space -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.backlog\.(com|jp)$') { $missing += "Space (valid *.backlog.com/.jp host)" }
 if ($projectId -notmatch '^[0-9]+$')          { $missing += "ProjectId (numeric)" }
-if ($parentId  -notmatch '^[0-9A-Za-z]+$')    { $missing += "ParentId (document id)" }
+if ($parentId  -notmatch '^[0-9A-Za-z]{16,64}$') { $missing += "ParentId (document id)" }
 if ($addLast   -notmatch '^(?i:true|false)$') { $missing += "AddLast (true/false)" }
 if ([string]::IsNullOrWhiteSpace($apiKey))    { $missing += "ApiKey (BACKLOG_API_KEY)" }
 if ($missing.Count -gt 0) {
     Write-Host ("[DRY RUN] Missing: " + ($missing -join ", ") + " - not sending. Fill config and re-run.") -ForegroundColor Yellow
     exit 0
 }
+
+# Duplicate guard: this account can add but not delete, so refuse to create a
+# second document with the same title under the same parent. Read-only GET, so
+# it also runs in -DryRun (find dups early). A failed check only warns, since
+# the confirm gate still applies before any real POST.
+try {
+    $treeUri = "https://" + $space + "/api/v2/documents/tree?projectIdOrKey=" + [System.Uri]::EscapeDataString($projectId) + "&apiKey=" + [System.Uri]::EscapeDataString($apiKey)
+    $tree = Invoke-RestMethod -Uri $treeUri -TimeoutSec 60 -ErrorAction Stop
+    $parentNode = Find-DocNode $tree.activeTree $parentId
+    if ($parentNode -eq $null) {
+        Write-Host "  [WARN] parent document not found in the tree - duplicate check skipped." -ForegroundColor Yellow
+    } else {
+        $kids = @()
+        if ($parentNode.children) { $kids = @($parentNode.children) }
+        $titleN = Normalize-Title $Title
+        $dup = $false
+        foreach ($c in $kids) {
+            if ((Normalize-Title $c.name) -eq $titleN -or (Normalize-Title $c.title) -eq $titleN) { $dup = $true; break }
+        }
+        if ($dup) {
+            Write-Host ("[DUPLICATE] A document named '" + $Title + "' already exists under the parent - not registering.") -ForegroundColor Red
+            Write-Host "            Rename/verify, or ask an admin if you intend to replace it." -ForegroundColor Yellow
+            exit 1
+        }
+        Write-Host ("  [OK] duplicate check: " + $kids.Count + " sibling(s) under the parent, no title match.") -ForegroundColor DarkGray
+    }
+} catch {
+    Write-Host ("  [WARN] duplicate check skipped (tree fetch failed): " + $_.Exception.Message) -ForegroundColor Yellow
+}
+
 if ($DryRun) {
     Write-Host "[DRY RUN] -DryRun set - not sending." -ForegroundColor Yellow
     exit 0
+}
+
+# Safety gate: a real post to the shared ALL space cannot be undone without an
+# admin (this account can add but not delete). Confirm unless -Force is given.
+if (-not $Force) {
+    Write-Host ""
+    $ok = Read-Host ("Register to " + $space + " under the parent doc? Type y to proceed")
+    if ($ok -ne "y" -and $ok -ne "Y") {
+        Write-Host "[ABORTED] Not sending (no 'y')." -ForegroundColor Yellow
+        exit 0
+    }
 }
 
 # --- 5) POST /api/v2/documents --------------------------------------

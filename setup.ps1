@@ -30,13 +30,21 @@ function Refresh-Path {
 function Download-File($url, $dest) {
     $tmp = "$dest.part"
     if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force }
-    curl.exe -fL --retry 3 -o "$tmp" "$url"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  [ERROR] download failed (exit $LASTEXITCODE): $url" -ForegroundColor Red
+    curl.exe -fL --retry 3 --connect-timeout 30 -o "$tmp" "$url"
+    $exit = $LASTEXITCODE
+    # Treat as failure unless curl succeeded AND a non-empty file landed.
+    if ($exit -ne 0 -or -not (Test-Path $tmp) -or (Get-Item $tmp).Length -eq 0) {
+        Write-Host "  [ERROR] download failed (exit $exit): $url" -ForegroundColor Red
         if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force }
         return $false
     }
-    Move-Item -LiteralPath $tmp -Destination $dest -Force
+    try {
+        Move-Item -LiteralPath $tmp -Destination $dest -Force -ErrorAction Stop
+    } catch {
+        Write-Host ("  [ERROR] could not place file: " + $_) -ForegroundColor Red
+        if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force }
+        return $false
+    }
     return $true
 }
 
@@ -92,7 +100,7 @@ if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) {
 
 # 5) Deploy scripts/template and names.txt into C:\minutes (from next to this setup.ps1)
 Write-Host "[5/5] Deploying scripts / template ..." -ForegroundColor Cyan
-foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "prompt_template.txt", "field_labels.txt", "backlog.config.sample.txt")) {
+foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "run.ps1", "prompt_template.txt", "field_labels.txt", "backlog.config.sample.txt")) {
     $src = Join-Path $PSScriptRoot $f
     if (Test-Path $src) {
         Copy-Item -LiteralPath $src -Destination "$base\$f" -Force
@@ -134,10 +142,27 @@ if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) { Write-
 if (Test-Path "$base\transcribe.ps1") { Write-Host "  transcribe.ps1: OK" -ForegroundColor Green } else { Write-Host "  transcribe.ps1: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\buildprompt.ps1") { Write-Host "  buildprompt.ps1: OK" -ForegroundColor Green } else { Write-Host "  buildprompt.ps1: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\register.ps1") { Write-Host "  register.ps1  : OK" -ForegroundColor Green } else { Write-Host "  register.ps1  : NOT deployed" -ForegroundColor Yellow }
-if (Test-Path "$base\backlog.config.txt") { Write-Host "  backlog.config: OK (set BACKLOG_API_KEY env var per user)" -ForegroundColor Green } else { Write-Host "  backlog.config: (none - created on next setup if sample present)" -ForegroundColor DarkGray }
+if (Test-Path "$base\run.ps1") { Write-Host "  run.ps1       : OK" -ForegroundColor Green } else { Write-Host "  run.ps1       : NOT deployed" -ForegroundColor Yellow }
+if (Test-Path "$base\backlog.config.txt") {
+    Write-Host "  backlog.config: OK (set BACKLOG_API_KEY env var per user)" -ForegroundColor Green
+    # Warn if the kept config still has placeholder/empty required values.
+    $kv = @{}
+    foreach ($line in (Get-Content "$base\backlog.config.txt" -Encoding UTF8)) {
+        if ($line -match '^\s*([A-Za-z_]+)\s*=\s*(.*)$') { $kv[$matches[1].ToLower()] = $matches[2].Trim() }
+    }
+    $cfgWarn = @()
+    if (-not $kv.ContainsKey("space")     -or $kv["space"] -eq "example.backlog.com" -or $kv["space"] -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.backlog\.(com|jp)$') { $cfgWarn += "Space" }
+    if (-not $kv.ContainsKey("projectid") -or $kv["projectid"] -notmatch '^[0-9]+$')             { $cfgWarn += "ProjectId" }
+    if (-not $kv.ContainsKey("parentid")  -or $kv["parentid"] -notmatch '^[0-9A-Za-z]{16,64}$')  { $cfgWarn += "ParentId" }
+    if ($cfgWarn.Count -gt 0) { Write-Host ("  [WARN] backlog.config.txt needs: " + ($cfgWarn -join ", ")) -ForegroundColor Yellow }
+    if ($kv.ContainsKey("apikey") -and $kv["apikey"] -ne "") { Write-Host "  [WARN] Remove ApiKey from backlog.config.txt - use the BACKLOG_API_KEY env var." -ForegroundColor Yellow }
+} else {
+    Write-Host "  backlog.config: (none - created on next setup if sample present)" -ForegroundColor DarkGray
+}
 if (Test-Path "$base\prompt_template.txt") { Write-Host "  prompt_template: OK" -ForegroundColor Green } else { Write-Host "  prompt_template: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\work\names.txt") { Write-Host "  names.txt     : OK" -ForegroundColor Green } else { Write-Host "  names.txt     : (none - optional)" -ForegroundColor DarkGray }
 
 Write-Host ""
-Write-Host "Done. Next: put a recording (.mp4) into $base\work and run:" -ForegroundColor Green
-Write-Host "  powershell -ExecutionPolicy Bypass -File `"$base\transcribe.ps1`"" -ForegroundColor Green
+Write-Host "Done. Next: put a recording (.mp4) into $base\work, set Link/Speaker in" -ForegroundColor Green
+Write-Host "  $base\work\meeting.txt, then run one command:" -ForegroundColor Green
+Write-Host "  powershell -ExecutionPolicy Bypass -File `"$base\run.ps1`"" -ForegroundColor Green

@@ -13,6 +13,10 @@
 #       Japanese text embedded in a .ps1 without a UTF-8 BOM).
 # =====================================================================
 
+param(
+    [switch]$Auto
+)
+
 # Use UTF-8 for console (best effort for Japanese in the transcript)
 try { chcp 65001 > $null } catch {}
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
@@ -31,7 +35,9 @@ function Notify-Done {
 }
 
 # Keep the window open when double-clicked, so results stay visible.
+# In -Auto (unattended) mode this is skipped so nothing waits for input.
 function Pause-End {
+    if ($Auto) { return }
     if ($Host.Name -eq "ConsoleHost") {
         try { Read-Host "Press Enter to close" | Out-Null } catch {}
     }
@@ -51,6 +57,10 @@ $mp4s = @(Get-ChildItem "$work\*.mp4" -ErrorAction SilentlyContinue | Sort-Objec
 if ($mp4s.Count -eq 0) { Write-Host "[ERROR] No .mp4 found in $work" -ForegroundColor Red; Pause-End; exit 1 }
 if ($mp4s.Count -eq 1) {
     $rec = $mp4s[0]
+} elseif ($Auto) {
+    # -Auto: do not prompt; use the newest recording (list is sorted desc).
+    $rec = $mp4s[0]
+    Write-Host ("Auto-selected newest recording: " + $rec.Name) -ForegroundColor Cyan
 } else {
     Write-Host "Recordings in work:" -ForegroundColor Cyan
     for ($i = 0; $i -lt $mp4s.Count; $i++) {
@@ -63,6 +73,20 @@ if ($mp4s.Count -eq 1) {
         [void][int]::TryParse($ans, [ref]$sel)
     }
     $rec = $mp4s[$sel - 1]
+}
+
+# Record which recording is used, so buildprompt.ps1 can auto-fill the meeting
+# date (file timestamp) and key the sequential meeting number (timestamp+size,
+# not the name, since Teams recordings often share a name).
+$srcKey  = "" + $rec.LastWriteTime.Ticks + "_" + $rec.Length
+$srcMeta = "Name=" + $rec.Name + "`r`nDate=" + $rec.LastWriteTime.ToString("yyyy/MM/dd") + "`r`nKey=" + $srcKey + "`r`n"
+# source.txt is the basis for the meeting date/number, so a failed write must
+# stop (otherwise buildprompt would read a stale source.txt from a prior run).
+try {
+    [System.IO.File]::WriteAllText("$work\source.txt", $srcMeta, (New-Object System.Text.UTF8Encoding($false)))
+} catch {
+    Write-Host ("[ERROR] could not write source.txt (needed for date/number): " + $_) -ForegroundColor Red
+    Pause-End; exit 1
 }
 
 # Recording duration (via ffprobe) so we can show an ETA (~1x realtime).
@@ -126,11 +150,12 @@ Write-Host ("Elapsed : {0:00}:{1:00}:{2:00}" -f [math]::Floor($el.TotalHours), $
 Write-Host ("Output  : $work\transcript.txt  ({0} chars)" -f $txt.Length) -ForegroundColor Green
 Write-Host ("          $work\transcript.srt / .vtt (with timestamps)") -ForegroundColor DarkGray
 
-# Build the ready-to-send AI prompt (asks for meeting info, fills the template)
+# Build the ready-to-send AI prompt (non-interactive; fills the template from
+# meeting.txt). In -Auto mode call it with -NoOpen so no notepad window pops up.
 $bp = "$base\buildprompt.ps1"
 if (-not (Test-Path $bp)) { $bp = Join-Path $PSScriptRoot "buildprompt.ps1" }
 if (Test-Path $bp) {
-    & $bp
+    if ($Auto) { & $bp -NoOpen } else { & $bp }
 } else {
     Write-Host "Next    : paste transcript.txt into the AI (Step 4) to draft the minutes." -ForegroundColor Green
 }

@@ -1,0 +1,13 @@
+# Backlog registration config - SHARED, non-secret values.
+# setup.ps1 copies this to C:\minutes\backlog.config.txt if that file is absent.
+# The live backlog.config.txt is git-ignored; this sample is committed.
+#
+# Each user only needs to set their OWN API key via the environment variable:
+#     setx BACKLOG_API_KEY "<your personal Backlog API key>"
+# Do NOT write the key into this file or the live config.
+
+Space=tcs-s.backlog.com
+ProjectId=520525
+ParentId=019f3bd8610676ec82f18751ae3e4946
+AddLast=true
+ApiKey=

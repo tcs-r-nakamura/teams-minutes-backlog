@@ -92,7 +92,7 @@ if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) {
 
 # 5) Deploy scripts/template and names.txt into C:\minutes (from next to this setup.ps1)
 Write-Host "[5/5] Deploying scripts / template ..." -ForegroundColor Cyan
-foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "prompt_template.txt", "field_labels.txt")) {
+foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "prompt_template.txt", "field_labels.txt", "backlog.config.sample.txt")) {
     $src = Join-Path $PSScriptRoot $f
     if (Test-Path $src) {
         Copy-Item -LiteralPath $src -Destination "$base\$f" -Force
@@ -112,6 +112,19 @@ if (Test-Path $srcNames) {
     }
 }
 
+# Create the live Backlog config from the shared sample (keep any existing one,
+# since a user may have added notes; the API key is never stored here anyway).
+$srcCfgSample = Join-Path $PSScriptRoot "backlog.config.sample.txt"
+$dstCfg       = "$base\backlog.config.txt"
+if (Test-Path $srcCfgSample) {
+    if (Test-Path $dstCfg) {
+        Write-Host "  backlog.config.txt already present - keep (not overwritten)" -ForegroundColor DarkGray
+    } else {
+        Copy-Item -LiteralPath $srcCfgSample -Destination $dstCfg -Force
+        Write-Host "  backlog.config.txt created from sample -> $base" -ForegroundColor DarkGray
+    }
+}
+
 # Verify
 Write-Host "=== Verify ===" -ForegroundColor Green
 Refresh-Path
@@ -121,6 +134,7 @@ if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) { Write-
 if (Test-Path "$base\transcribe.ps1") { Write-Host "  transcribe.ps1: OK" -ForegroundColor Green } else { Write-Host "  transcribe.ps1: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\buildprompt.ps1") { Write-Host "  buildprompt.ps1: OK" -ForegroundColor Green } else { Write-Host "  buildprompt.ps1: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\register.ps1") { Write-Host "  register.ps1  : OK" -ForegroundColor Green } else { Write-Host "  register.ps1  : NOT deployed" -ForegroundColor Yellow }
+if (Test-Path "$base\backlog.config.txt") { Write-Host "  backlog.config: OK (set BACKLOG_API_KEY env var per user)" -ForegroundColor Green } else { Write-Host "  backlog.config: (none - created on next setup if sample present)" -ForegroundColor DarkGray }
 if (Test-Path "$base\prompt_template.txt") { Write-Host "  prompt_template: OK" -ForegroundColor Green } else { Write-Host "  prompt_template: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\work\names.txt") { Write-Host "  names.txt     : OK" -ForegroundColor Green } else { Write-Host "  names.txt     : (none - optional)" -ForegroundColor DarkGray }
 

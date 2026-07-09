@@ -13,7 +13,7 @@
 # Config (secrets/IDs are NOT stored in the repo): C:\minutes\backlog.config.txt
 #   Space=example.backlog.com     # your space host (.backlog.com or .backlog.jp)
 #   ProjectId=12345               # numeric id of the target project (ALL)
-#   ParentId=67890                # parent document node id (required)
+#   ParentId=019f3bd8...          # parent document id, string from the doc URL (required)
 #   AddLast=true                  # add as the last sibling (optional)
 #   ApiKey=...                    # optional here; env var BACKLOG_API_KEY wins
 # If the file is missing, a starter is created and the script stops.
@@ -159,7 +159,7 @@ $missing = @()
 if ($space -eq "" -or $space -eq "example.backlog.com" -or
     $space -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.backlog\.(com|jp)$') { $missing += "Space (valid *.backlog.com/.jp host)" }
 if ($projectId -notmatch '^[0-9]+$')          { $missing += "ProjectId (numeric)" }
-if ($parentId  -notmatch '^[0-9]+$')          { $missing += "ParentId (numeric)" }
+if ($parentId  -notmatch '^[0-9A-Za-z]+$')    { $missing += "ParentId (document id)" }
 if ($addLast   -notmatch '^(?i:true|false)$') { $missing += "AddLast (true/false)" }
 if ([string]::IsNullOrWhiteSpace($apiKey))    { $missing += "ApiKey (BACKLOG_API_KEY)" }
 if ($missing.Count -gt 0) {

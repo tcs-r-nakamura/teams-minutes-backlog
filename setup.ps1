@@ -90,14 +90,16 @@ if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) {
     [void](Download-File $modelUrl $modelPath)
 }
 
-# 5) Deploy transcribe.ps1 and names.txt into C:\minutes (from next to this setup.ps1)
-Write-Host "[5/5] Deploying transcribe.ps1 / names.txt ..." -ForegroundColor Cyan
-$srcTranscribe = Join-Path $PSScriptRoot "transcribe.ps1"
-if (Test-Path $srcTranscribe) {
-    Copy-Item -LiteralPath $srcTranscribe -Destination "$base\transcribe.ps1" -Force
-    Write-Host "  transcribe.ps1 -> $base" -ForegroundColor DarkGray
-} else {
-    Write-Host "  transcribe.ps1 not found next to setup.ps1 - skip (place it manually)" -ForegroundColor Yellow
+# 5) Deploy scripts/template and names.txt into C:\minutes (from next to this setup.ps1)
+Write-Host "[5/5] Deploying scripts / template ..." -ForegroundColor Cyan
+foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "prompt_template.txt", "field_labels.txt")) {
+    $src = Join-Path $PSScriptRoot $f
+    if (Test-Path $src) {
+        Copy-Item -LiteralPath $src -Destination "$base\$f" -Force
+        Write-Host "  $f -> $base" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  $f not found next to setup.ps1 - skip (place it manually)" -ForegroundColor Yellow
+    }
 }
 $srcNames = Join-Path $PSScriptRoot "names.txt"
 $dstNames = "$base\work\names.txt"
@@ -117,6 +119,9 @@ if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { Write-Host "  ffmpeg    
 if (Test-Path $cliPath) { Write-Host "  whisper-cli   : OK" -ForegroundColor Green } else { Write-Host "  whisper-cli   : NOT FOUND" -ForegroundColor Yellow }
 if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) { Write-Host ("  model         : OK (" + [math]::Round((Get-Item $modelPath).Length/1MB) + " MB)") -ForegroundColor Green } else { Write-Host "  model         : MISSING or incomplete" -ForegroundColor Yellow }
 if (Test-Path "$base\transcribe.ps1") { Write-Host "  transcribe.ps1: OK" -ForegroundColor Green } else { Write-Host "  transcribe.ps1: NOT deployed" -ForegroundColor Yellow }
+if (Test-Path "$base\buildprompt.ps1") { Write-Host "  buildprompt.ps1: OK" -ForegroundColor Green } else { Write-Host "  buildprompt.ps1: NOT deployed" -ForegroundColor Yellow }
+if (Test-Path "$base\register.ps1") { Write-Host "  register.ps1  : OK" -ForegroundColor Green } else { Write-Host "  register.ps1  : NOT deployed" -ForegroundColor Yellow }
+if (Test-Path "$base\prompt_template.txt") { Write-Host "  prompt_template: OK" -ForegroundColor Green } else { Write-Host "  prompt_template: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\work\names.txt") { Write-Host "  names.txt     : OK" -ForegroundColor Green } else { Write-Host "  names.txt     : (none - optional)" -ForegroundColor DarkGray }
 
 Write-Host ""

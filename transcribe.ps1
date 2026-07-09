@@ -9,9 +9,11 @@
 #        powershell -ExecutionPolicy Bypass -File "C:\minutes\transcribe.ps1"
 #
 # Output:  C:\minutes\work\transcript.txt / .srt / .vtt
+# Note: messages are in English on purpose (PowerShell 5.1 mangles
+#       Japanese text embedded in a .ps1 without a UTF-8 BOM).
 # =====================================================================
 
-# Use UTF-8 for console (best effort for Japanese)
+# Use UTF-8 for console (best effort for Japanese in the transcript)
 try { chcp 65001 > $null } catch {}
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
@@ -20,21 +22,33 @@ $work  = "$base\work"
 $cli   = "$base\tools\whisper\Release\whisper-cli.exe"
 $model = "$base\tools\whisper\models\ggml-medium.bin"
 
-# Refresh PATH so ffmpeg is found in a fresh session
+# Refresh PATH so ffmpeg/ffprobe are found in a fresh session
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 
+function Notify-Done {
+    # Short two-tone beep so you notice completion while doing other work.
+    try { [console]::Beep(1000, 350); [console]::Beep(1300, 450) } catch {}
+}
+
+# Keep the window open when double-clicked, so results stay visible.
+function Pause-End {
+    if ($Host.Name -eq "ConsoleHost") {
+        try { Read-Host "Press Enter to close" | Out-Null } catch {}
+    }
+}
+
 # Preconditions - fail early with a clear message
-if (-not (Test-Path $work)) { Write-Host "[ERROR] work folder not found: $work  (run setup.ps1 first)" -ForegroundColor Red; exit 1 }
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Host "[ERROR] ffmpeg not found (run setup.ps1, or open a new PowerShell)" -ForegroundColor Red; exit 1 }
-if (-not (Test-Path $cli))   { Write-Host "[ERROR] whisper-cli.exe not found: $cli  (run setup.ps1)" -ForegroundColor Red; exit 1 }
-if (-not (Test-Path $model)) { Write-Host "[ERROR] model not found: $model  (run setup.ps1)" -ForegroundColor Red; exit 1 }
+if (-not (Test-Path $work)) { Write-Host "[ERROR] work folder not found: $work  (run setup.ps1 first)" -ForegroundColor Red; Pause-End; exit 1 }
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Host "[ERROR] ffmpeg not found (run setup.ps1, or open a new PowerShell)" -ForegroundColor Red; Pause-End; exit 1 }
+if (-not (Test-Path $cli))   { Write-Host "[ERROR] whisper-cli.exe not found: $cli  (run setup.ps1)" -ForegroundColor Red; Pause-End; exit 1 }
+if (-not (Test-Path $model)) { Write-Host "[ERROR] model not found: $model  (run setup.ps1)" -ForegroundColor Red; Pause-End; exit 1 }
 
 # Pick the recording (.mp4) in work.
 #   - 0 files : error
 #   - 1 file  : use it automatically
 #   - 2+ files: show a numbered list and let the user choose
 $mp4s = @(Get-ChildItem "$work\*.mp4" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
-if ($mp4s.Count -eq 0) { Write-Host "[ERROR] No .mp4 found in $work" -ForegroundColor Red; exit 1 }
+if ($mp4s.Count -eq 0) { Write-Host "[ERROR] No .mp4 found in $work" -ForegroundColor Red; Pause-End; exit 1 }
 if ($mp4s.Count -eq 1) {
     $rec = $mp4s[0]
 } else {
@@ -50,7 +64,25 @@ if ($mp4s.Count -eq 1) {
     }
     $rec = $mp4s[$sel - 1]
 }
+
+# Recording duration (via ffprobe) so we can show an ETA (~1x realtime).
+$durText = "unknown"
+$etaText = "unknown"
+try {
+    $durRaw = & ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $rec.FullName 2>$null
+    $durSec = 0.0
+    if ([double]::TryParse([string]$durRaw, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$durSec) -and $durSec -gt 0) {
+        $ts = [TimeSpan]::FromSeconds($durSec)
+        $durText = "{0:00}:{1:00}:{2:00}" -f [math]::Floor($ts.TotalHours), $ts.Minutes, $ts.Seconds
+        $etaText = "about {0} min" -f [math]::Ceiling($durSec / 60.0)
+    }
+} catch {}
+
+Write-Host ""
+Write-Host "=== minutes transcribe ===" -ForegroundColor Green
 Write-Host ("Recording : " + $rec.Name) -ForegroundColor Cyan
+Write-Host ("Duration  : " + $durText) -ForegroundColor Cyan
+Write-Host ("Est. time : " + $etaText + " (~1x realtime, CPU)") -ForegroundColor Cyan
 
 # Read name hint (UTF-8) if present
 $names = ""
@@ -58,21 +90,48 @@ $namesPath = "$work\names.txt"
 if (Test-Path $namesPath) { $names = (Get-Content $namesPath -Encoding UTF8 -Raw).Trim() }
 if ($names) { Write-Host ("Name hint : " + $names) -ForegroundColor DarkGray }
 
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+
 # 1) Extract audio (16kHz mono WAV)
+Write-Host ""
 Write-Host "[1/3] Extracting audio..." -ForegroundColor Cyan
 ffmpeg -y -loglevel error -i $rec.FullName -ar 16000 -ac 1 -c:a pcm_s16le "$work\transcript.wav"
-if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] ffmpeg failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] ffmpeg failed (exit $LASTEXITCODE)" -ForegroundColor Red; Pause-End; exit 1 }
 
 # 2) Transcribe (Japanese). Uses --prompt when names.txt exists.
-Write-Host "[2/3] Transcribing in Japanese (this can take a while)..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host ("[2/3] Transcribing in Japanese... (" + $etaText + ")") -ForegroundColor Cyan
+Write-Host "      *** Do NOT close this window. It is working; just wait. ***" -ForegroundColor Yellow
 if ($names) {
     & $cli -m $model -f "$work\transcript.wav" -l ja --prompt $names --carry-initial-prompt -otxt -osrt -ovtt -pp -of "$work\transcript"
 } else {
     & $cli -m $model -f "$work\transcript.wav" -l ja -otxt -osrt -ovtt -pp -of "$work\transcript"
 }
-if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] whisper-cli failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] whisper-cli failed (exit $LASTEXITCODE)" -ForegroundColor Red; Pause-End; exit 1 }
 
 # 3) Show result
-if (-not (Test-Path "$work\transcript.txt")) { Write-Host "[ERROR] transcript.txt was not produced" -ForegroundColor Red; exit 1 }
-Write-Host "[3/3] Done. transcript.txt :" -ForegroundColor Green
-Get-Content "$work\transcript.txt" -Encoding UTF8
+if (-not (Test-Path "$work\transcript.txt")) { Write-Host "[ERROR] transcript.txt was not produced" -ForegroundColor Red; Pause-End; exit 1 }
+$sw.Stop()
+
+$txt = Get-Content "$work\transcript.txt" -Encoding UTF8 -Raw
+Write-Host ""
+Write-Host "[3/3] transcript.txt :" -ForegroundColor Green
+Write-Host $txt
+
+Notify-Done
+Write-Host ""
+Write-Host "=== DONE ===" -ForegroundColor Green
+$el = $sw.Elapsed
+Write-Host ("Elapsed : {0:00}:{1:00}:{2:00}" -f [math]::Floor($el.TotalHours), $el.Minutes, $el.Seconds) -ForegroundColor Green
+Write-Host ("Output  : $work\transcript.txt  ({0} chars)" -f $txt.Length) -ForegroundColor Green
+Write-Host ("          $work\transcript.srt / .vtt (with timestamps)") -ForegroundColor DarkGray
+
+# Build the ready-to-send AI prompt (asks for meeting info, fills the template)
+$bp = "$base\buildprompt.ps1"
+if (-not (Test-Path $bp)) { $bp = Join-Path $PSScriptRoot "buildprompt.ps1" }
+if (Test-Path $bp) {
+    & $bp
+} else {
+    Write-Host "Next    : paste transcript.txt into the AI (Step 4) to draft the minutes." -ForegroundColor Green
+}
+Pause-End

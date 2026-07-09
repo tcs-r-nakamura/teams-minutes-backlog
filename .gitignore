@@ -1,0 +1,6 @@
+# Backlog registration config may contain an API key / IDs - never commit it.
+backlog.config.txt
+
+# Local runtime artifacts (should live under C:\minutes, not the repo)
+work/
+*.wav

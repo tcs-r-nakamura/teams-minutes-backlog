@@ -76,10 +76,21 @@ if ($mp4s.Count -eq 1) {
 }
 
 # Record which recording is used, so buildprompt.ps1 can auto-fill the meeting
-# date (file timestamp) and key the sequential meeting number (timestamp+size,
-# not the name, since Teams recordings often share a name).
-$srcKey  = "" + $rec.LastWriteTime.Ticks + "_" + $rec.Length
-$srcMeta = "Name=" + $rec.Name + "`r`nDate=" + $rec.LastWriteTime.ToString("yyyy/MM/dd") + "`r`nKey=" + $srcKey + "`r`n"
+# date and key the sequential meeting number. Teams recording names embed the
+# meeting date/time as "...-YYYYMMDD_HHMMSS-...", which is the real meeting date
+# and is stable across re-downloads. Prefer it over the file timestamp: a
+# re-download changes the timestamp (bumping the counter, wrong date) but not the
+# name. Fall back to the file timestamp/size when the name has no such token.
+$mtgDate = $rec.LastWriteTime.ToString("yyyy/MM/dd")          # fallback
+$srcKey  = "" + $rec.LastWriteTime.Ticks + "_" + $rec.Length  # fallback
+if ($rec.Name -match '([0-9]{8})_([0-9]{6})') {
+    $parsed = [datetime]::MinValue
+    if ([datetime]::TryParseExact($matches[1], "yyyyMMdd", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        $mtgDate = $parsed.ToString("yyyy/MM/dd")
+        $srcKey  = $matches[1] + "_" + $matches[2]   # meeting datetime token (stable per meeting)
+    }
+}
+$srcMeta = "Name=" + $rec.Name + "`r`nDate=" + $mtgDate + "`r`nKey=" + $srcKey + "`r`n"
 # source.txt is the basis for the meeting date/number, so a failed write must
 # stop (otherwise buildprompt would read a stale source.txt from a prior run).
 try {
@@ -150,12 +161,13 @@ Write-Host ("Elapsed : {0:00}:{1:00}:{2:00}" -f [math]::Floor($el.TotalHours), $
 Write-Host ("Output  : $work\transcript.txt  ({0} chars)" -f $txt.Length) -ForegroundColor Green
 Write-Host ("          $work\transcript.srt / .vtt (with timestamps)") -ForegroundColor DarkGray
 
-# Build the ready-to-send AI prompt (non-interactive; fills the template from
-# meeting.txt). In -Auto mode call it with -NoOpen so no notepad window pops up.
+# Build the ready-to-send AI prompt (non-interactive; all values auto-filled).
+# Open the finished prompt (ai_prompt.txt) so it is ready to review and paste -
+# this runs even in -Auto mode, so after transcription the prompt pops up.
 $bp = "$base\buildprompt.ps1"
 if (-not (Test-Path $bp)) { $bp = Join-Path $PSScriptRoot "buildprompt.ps1" }
 if (Test-Path $bp) {
-    if ($Auto) { & $bp -NoOpen } else { & $bp }
+    & $bp
 } else {
     Write-Host "Next    : paste transcript.txt into the AI (Step 4) to draft the minutes." -ForegroundColor Green
 }

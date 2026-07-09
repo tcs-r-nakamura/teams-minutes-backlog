@@ -8,5 +8,10 @@
 
 Space=tcs-s.backlog.com
 ProjectId=520525
-ParentId=019f3bd8610676ec82f18751ae3e4946
+ParentId=019f3bd7c41e77b78709ccf2885a1175
 AddLast=true
+
+# Recording link written into every minutes draft. This is the Cybozu folder
+# where recordings are stored (shared for the team). Update it here if the
+# recording folder ever changes.
+RecFolderUrl=https://tcs-s.cybozu.com/o/ag.cgi?page=FileIndex&fCID=45883

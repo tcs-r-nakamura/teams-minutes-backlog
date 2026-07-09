@@ -127,6 +127,20 @@ $dstCfg       = "$base\backlog.config.txt"
 if (Test-Path $srcCfgSample) {
     if (Test-Path $dstCfg) {
         Write-Host "  backlog.config.txt already present - keep (not overwritten)" -ForegroundColor DarkGray
+        # Migrate configs from the pre-RecFolderUrl (meeting.txt) design: append
+        # the non-secret recording-link key from the sample if it is missing, so
+        # the recording link does not end up blank in the generated prompt.
+        $hasRec = $false
+        foreach ($line in (Get-Content $dstCfg -Encoding UTF8)) {
+            if ($line -match '^\s*RecFolderUrl\s*=') { $hasRec = $true; break }
+        }
+        if (-not $hasRec) {
+            $recLine = Get-Content $srcCfgSample -Encoding UTF8 | Where-Object { $_ -match '^\s*RecFolderUrl\s*=' } | Select-Object -First 1
+            if ($recLine) {
+                Add-Content -Path $dstCfg -Value $recLine -Encoding UTF8
+                Write-Host "  backlog.config.txt: added missing RecFolderUrl (migrated)" -ForegroundColor DarkGray
+            }
+        }
     } else {
         Copy-Item -LiteralPath $srcCfgSample -Destination $dstCfg -Force
         Write-Host "  backlog.config.txt created from sample -> $base" -ForegroundColor DarkGray
@@ -154,6 +168,7 @@ if (Test-Path "$base\backlog.config.txt") {
     if (-not $kv.ContainsKey("space")     -or $kv["space"] -eq "example.backlog.com" -or $kv["space"] -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.backlog\.(com|jp)$') { $cfgWarn += "Space" }
     if (-not $kv.ContainsKey("projectid") -or $kv["projectid"] -notmatch '^[0-9]+$')             { $cfgWarn += "ProjectId" }
     if (-not $kv.ContainsKey("parentid")  -or $kv["parentid"] -notmatch '^[0-9A-Za-z]{16,64}$')  { $cfgWarn += "ParentId" }
+    if (-not $kv.ContainsKey("recfolderurl") -or $kv["recfolderurl"] -eq "")                     { $cfgWarn += "RecFolderUrl" }
     if ($cfgWarn.Count -gt 0) { Write-Host ("  [WARN] backlog.config.txt needs: " + ($cfgWarn -join ", ")) -ForegroundColor Yellow }
     if ($kv.ContainsKey("apikey") -and $kv["apikey"] -ne "") { Write-Host "  [WARN] Remove ApiKey from backlog.config.txt - use the BACKLOG_API_KEY env var." -ForegroundColor Yellow }
 } else {
@@ -163,6 +178,6 @@ if (Test-Path "$base\prompt_template.txt") { Write-Host "  prompt_template: OK" 
 if (Test-Path "$base\work\names.txt") { Write-Host "  names.txt     : OK" -ForegroundColor Green } else { Write-Host "  names.txt     : (none - optional)" -ForegroundColor DarkGray }
 
 Write-Host ""
-Write-Host "Done. Next: put a recording (.mp4) into $base\work, set Link/Speaker in" -ForegroundColor Green
-Write-Host "  $base\work\meeting.txt, then run one command:" -ForegroundColor Green
+Write-Host "Done. Next: put a recording (.mp4) into $base\work, then run one command" -ForegroundColor Green
+Write-Host "  (recording link and speaker are filled in automatically):" -ForegroundColor Green
 Write-Host "  powershell -ExecutionPolicy Bypass -File `"$base\run.ps1`"" -ForegroundColor Green

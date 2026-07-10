@@ -19,10 +19,12 @@ $cliPath    = "$whisperDir\Release\whisper-cli.exe"
 $modelPath  = "$whisperDir\models\ggml-medium.bin"
 $whisperUrl = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip"
 $modelUrl   = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
-
-function Refresh-Path {
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-}
+# FFmpeg: a static Windows build, downloaded directly (no winget / admin rights
+# needed) so it works on locked-down PCs. Static exes need no extra DLLs.
+$ffmpegDir  = "$base\tools\ffmpeg"
+$ffmpegExe  = "$ffmpegDir\ffmpeg.exe"
+$ffprobeExe = "$ffmpegDir\ffprobe.exe"
+$ffmpegUrl  = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 
 # Download to a .part file, then move into place only on success.
 # Uses curl.exe -f (fail on HTTP error) and --retry so a partial/HTTP-error
@@ -55,17 +57,34 @@ Write-Host "[1/5] Creating folders under $base ..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Force "$whisperDir\models" | Out-Null
 New-Item -ItemType Directory -Force "$base\work" | Out-Null
 
-# 2) FFmpeg (winget)
+# 2) FFmpeg (direct download of a static build - no winget / admin rights needed,
+#    so it works on locked-down PCs where winget is missing/blocked)
 Write-Host "[2/5] FFmpeg ..." -ForegroundColor Cyan
-Refresh-Path
-if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-    Write-Host "  already installed - skip" -ForegroundColor DarkGray
+if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) {
+    Write-Host "  already present - skip" -ForegroundColor DarkGray
 } else {
-    Write-Host "  installing via winget (Gyan.FFmpeg) ..." -ForegroundColor DarkGray
-    winget install --id Gyan.FFmpeg --source winget --accept-source-agreements --accept-package-agreements
-    Refresh-Path
-    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-        Write-Host "  [WARN] ffmpeg not on PATH yet. Open a NEW PowerShell after setup finishes." -ForegroundColor Yellow
+    Write-Host "  downloading static build (no winget needed) ..." -ForegroundColor DarkGray
+    $ffZip = "$base\tools\ffmpeg-build.zip"
+    if (Download-File $ffmpegUrl $ffZip) {
+        $ffTmp = "$base\tools\ffmpeg-extract"
+        if (Test-Path $ffTmp) { Remove-Item -LiteralPath $ffTmp -Recurse -Force -ErrorAction SilentlyContinue }
+        try {
+            Expand-Archive -Path $ffZip -DestinationPath $ffTmp -Force -ErrorAction Stop
+        } catch {
+            Write-Host "  [ERROR] unzip failed: $_" -ForegroundColor Red
+        }
+        # The zip nests bin\ffmpeg.exe under a versioned folder; copy the two exes
+        # we need to a fixed location (static build = no extra DLLs required).
+        New-Item -ItemType Directory -Force $ffmpegDir | Out-Null
+        $srcFf = Get-ChildItem $ffTmp -Recurse -Filter "ffmpeg.exe"  -ErrorAction SilentlyContinue | Select-Object -First 1
+        $srcFp = Get-ChildItem $ffTmp -Recurse -Filter "ffprobe.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($srcFf) { Copy-Item -LiteralPath $srcFf.FullName -Destination $ffmpegExe  -Force }
+        if ($srcFp) { Copy-Item -LiteralPath $srcFp.FullName -Destination $ffprobeExe -Force }
+        Remove-Item -LiteralPath $ffZip -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $ffTmp -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe))) {
+            Write-Host "  [WARN] ffmpeg.exe/ffprobe.exe not found after extract." -ForegroundColor Yellow
+        }
     }
 }
 
@@ -149,8 +168,7 @@ if (Test-Path $srcCfgSample) {
 
 # Verify
 Write-Host "=== Verify ===" -ForegroundColor Green
-Refresh-Path
-if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { Write-Host "  ffmpeg        : OK" -ForegroundColor Green } else { Write-Host "  ffmpeg        : NOT FOUND (open a new PowerShell and re-check)" -ForegroundColor Yellow }
+if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) { Write-Host "  ffmpeg        : OK" -ForegroundColor Green } else { Write-Host "  ffmpeg        : NOT FOUND" -ForegroundColor Yellow }
 if (Test-Path $cliPath) { Write-Host "  whisper-cli   : OK" -ForegroundColor Green } else { Write-Host "  whisper-cli   : NOT FOUND" -ForegroundColor Yellow }
 if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) { Write-Host ("  model         : OK (" + [math]::Round((Get-Item $modelPath).Length/1MB) + " MB)") -ForegroundColor Green } else { Write-Host "  model         : MISSING or incomplete" -ForegroundColor Yellow }
 if (Test-Path "$base\transcribe.ps1") { Write-Host "  transcribe.ps1: OK" -ForegroundColor Green } else { Write-Host "  transcribe.ps1: NOT deployed" -ForegroundColor Yellow }

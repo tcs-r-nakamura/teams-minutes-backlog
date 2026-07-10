@@ -26,8 +26,13 @@ $work  = "$base\work"
 $cli   = "$base\tools\whisper\Release\whisper-cli.exe"
 $model = "$base\tools\whisper\models\ggml-medium.bin"
 
-# Refresh PATH so ffmpeg/ffprobe are found in a fresh session
+# Refresh PATH so a PATH-based ffmpeg/ffprobe (older winget installs) is found too.
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+# Prefer the locally-installed static FFmpeg (setup.ps1 downloads it there so no
+# winget/PATH is required); fall back to a PATH ffmpeg/ffprobe if present.
+$ffmpeg  = if (Test-Path "$base\tools\ffmpeg\ffmpeg.exe")  { "$base\tools\ffmpeg\ffmpeg.exe" }  else { "ffmpeg" }
+$ffprobe = if (Test-Path "$base\tools\ffmpeg\ffprobe.exe") { "$base\tools\ffmpeg\ffprobe.exe" } else { "ffprobe" }
 
 function Notify-Done {
     # Short two-tone beep so you notice completion while doing other work.
@@ -45,7 +50,7 @@ function Pause-End {
 
 # Preconditions - fail early with a clear message
 if (-not (Test-Path $work)) { Write-Host "[ERROR] work folder not found: $work  (run setup.ps1 first)" -ForegroundColor Red; Pause-End; exit 1 }
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Host "[ERROR] ffmpeg not found (run setup.ps1, or open a new PowerShell)" -ForegroundColor Red; Pause-End; exit 1 }
+if (-not (Get-Command $ffmpeg -ErrorAction SilentlyContinue)) { Write-Host "[ERROR] ffmpeg not found (run setup.ps1)" -ForegroundColor Red; Pause-End; exit 1 }
 if (-not (Test-Path $cli))   { Write-Host "[ERROR] whisper-cli.exe not found: $cli  (run setup.ps1)" -ForegroundColor Red; Pause-End; exit 1 }
 if (-not (Test-Path $model)) { Write-Host "[ERROR] model not found: $model  (run setup.ps1)" -ForegroundColor Red; Pause-End; exit 1 }
 
@@ -104,7 +109,7 @@ try {
 $durText = "unknown"
 $etaText = "unknown"
 try {
-    $durRaw = & ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $rec.FullName 2>$null
+    $durRaw = & $ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $rec.FullName 2>$null
     $durSec = 0.0
     if ([double]::TryParse([string]$durRaw, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$durSec) -and $durSec -gt 0) {
         $ts = [TimeSpan]::FromSeconds($durSec)
@@ -130,7 +135,7 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 # 1) Extract audio (16kHz mono WAV)
 Write-Host ""
 Write-Host "[1/3] Extracting audio..." -ForegroundColor Cyan
-ffmpeg -y -loglevel error -i $rec.FullName -ar 16000 -ac 1 -c:a pcm_s16le "$work\transcript.wav"
+& $ffmpeg -y -loglevel error -i $rec.FullName -ar 16000 -ac 1 -c:a pcm_s16le "$work\transcript.wav"
 if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] ffmpeg failed (exit $LASTEXITCODE)" -ForegroundColor Red; Pause-End; exit 1 }
 
 # 2) Transcribe (Japanese). Uses --prompt when names.txt exists.

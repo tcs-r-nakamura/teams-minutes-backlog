@@ -1,6 +1,0 @@
-meeting_no=会議番号（第〇回システム設計×AI駆動開発勉強会 の〇に入る数字）
-meeting_date=開催日（YYYY/MM/DD）
-rec_link=録画リンク（社内・閲覧のみの共有URL。無ければ空Enter）
-speaker=登壇者（正式名。複数可。無ければ空Enter）
-review_header=入力内容の確認
-confirm=この内容で作成しますか？ y=作成 / その他=入力し直す

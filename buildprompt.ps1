@@ -21,8 +21,7 @@
 #   powershell -ExecutionPolicy Bypass -File "C:\minutes\buildprompt.ps1" -NoOpen   # no notepad (automation)
 #
 # Messages are in English on purpose (PS 5.1 mangles Japanese embedded in a
-# .ps1 without a UTF-8 BOM). Japanese text lives in prompt_template.txt /
-# field_labels.txt.
+# .ps1 without a UTF-8 BOM). Japanese text lives in prompt_template.txt.
 # =====================================================================
 
 param(
@@ -160,35 +159,12 @@ if ($srcKey -ne "") {
     try { [System.IO.File]::WriteAllText($noPath, $noOut, (New-Object System.Text.UTF8Encoding($false))) } catch {}
 }
 
-# Field labels (Japanese) are read from field_labels.txt (UTF-8) so the .ps1
-# can stay ASCII-only. English fallbacks are used if the file is missing.
-$L = @{
-    meeting_no    = "Meeting number"
-    meeting_date  = "Meeting date"
-    rec_link      = "Recording link"
-    speaker       = "Speaker(s)"
-}
-$labelFile = "$base\field_labels.txt"
-if (-not (Test-Path $labelFile)) { $labelFile = Join-Path $PSScriptRoot "field_labels.txt" }
-if (Test-Path $labelFile) {
-    foreach ($line in (Get-Content $labelFile -Encoding UTF8)) {
-        if ($line -match '^\s*([a-z_]+)\s*=\s*(.+)$') { $L[$matches[1]] = $matches[2].Trim() }
-    }
-}
-
-# Short field name for the summary: drop the hint part after "(" or full-width "(".
-# The full-width paren is built from its code point so this .ps1 stays ASCII-only.
-function Get-ShortLabel($s) {
-    $fp = [char]0xFF08
-    (($s -replace ([regex]::Escape($fp) + '.*$'), '') -replace '\(.*$', '').Trim()
-}
-
 Write-Host ""
 Write-Host "=== build AI prompt ===" -ForegroundColor Green
-Write-Host ("  " + (Get-ShortLabel $L.meeting_no)   + " : " + $no + "  (from " + $noSource + ")")
-Write-Host ("  " + (Get-ShortLabel $L.meeting_date) + " : " + $date)
-Write-Host ("  " + (Get-ShortLabel $L.rec_link)     + " : " + $link)
-Write-Host ("  " + (Get-ShortLabel $L.speaker)      + " : " + $spk + "  (blank -> AI infers)")
+Write-Host ("  Meeting number : " + $no + "  (from " + $noSource + ")")
+Write-Host ("  Meeting date   : " + $date)
+Write-Host ("  Recording link : " + $link)
+Write-Host ("  Speaker        : " + $spk + "  (blank -> AI infers)")
 if ($link -eq "") { Write-Host "[WARN] Link is blank - add RecFolderUrl to backlog.config.txt." -ForegroundColor Yellow }
 if ($blNo -eq $null) { Write-Host "[NOTE] Meeting number is from the local counter (Backlog not reachable / no API key), so it may not match the true number on a fresh setup. Set BACKLOG_API_KEY for the correct number." -ForegroundColor DarkGray }
 

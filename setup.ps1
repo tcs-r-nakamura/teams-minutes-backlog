@@ -100,7 +100,7 @@ if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) {
 
 # 5) Deploy scripts/template and names.txt into C:\minutes (from next to this setup.ps1)
 Write-Host "[5/5] Deploying scripts / template ..." -ForegroundColor Cyan
-foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "run.ps1", "prompt_template.txt", "field_labels.txt", "backlog.config.sample.txt")) {
+foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "run.ps1", "prompt_template.txt", "backlog.config.sample.txt")) {
     $src = Join-Path $PSScriptRoot $f
     if (Test-Path $src) {
         Copy-Item -LiteralPath $src -Destination "$base\$f" -Force

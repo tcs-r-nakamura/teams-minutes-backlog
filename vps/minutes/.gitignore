@@ -3,6 +3,9 @@ inbox/
 work/
 out/
 state/
+# secrets (tokens) - keep in ~/.config/minutes.env, never in the repo
+*.env
+minutes.env
 # Nix
 result
 result-*

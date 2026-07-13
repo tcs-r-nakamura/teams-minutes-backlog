@@ -4,6 +4,81 @@ variables only (never committed): SAKURA_AI_TOKEN, BACKLOG_API_KEY.
 Non-secret defaults can be overridden by environment variables too.
 """
 import os
+import re
+import stat
+import sys
+
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _load_env_file():
+    """Load KEY=VALUE lines from a dotenv-style file into os.environ, WITHOUT
+    overriding variables already set in the environment. Lets each engineer keep
+    their tokens in one chmod-600 file instead of re-exporting every session.
+
+    Path: $MINUTES_ENV, else ~/.config/minutes.env.
+      - default path missing        -> silent no-op
+      - MINUTES_ENV set but unusable -> RuntimeError (never echoing contents)
+    As it holds secrets we skip symlinks / non-owned / non-regular files, and
+    warn on group/other-accessible permissions. Values are never printed.
+    """
+    explicit = os.environ.get("MINUTES_ENV")
+    path = explicit or os.path.join(os.path.expanduser("~"), ".config", "minutes.env")
+
+    def _bail(msg):
+        if explicit:
+            raise RuntimeError(msg)  # explicit path: fail loud (msg has no secrets)
+
+    try:
+        st = os.lstat(path)
+    except OSError:
+        _bail("MINUTES_ENV is set but not accessible: %s" % path)
+        return
+    if stat.S_ISLNK(st.st_mode):
+        print("[WARN] %s is a symlink; not reading it as a secrets file "
+              "(point MINUTES_ENV at the real file)." % path, file=sys.stderr)
+        _bail("MINUTES_ENV must be a regular file, not a symlink: %s" % path)
+        return
+    if not stat.S_ISREG(st.st_mode):
+        _bail("MINUTES_ENV is not a regular file: %s" % path)
+        return
+    if hasattr(os, "getuid"):
+        if st.st_uid != os.getuid():
+            print("[WARN] %s is not owned by you; skipping (secrets file)." % path,
+                  file=sys.stderr)
+            _bail("MINUTES_ENV is not owned by the current user: %s" % path)
+            return
+        if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            print("[WARN] %s is group/other-accessible; run: chmod 600 %s"
+                  % (path, path), file=sys.stderr)
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError as e:
+        _bail("MINUTES_ENV could not be read: %s (%s)" % (path, e.strerror))
+        return
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if not _ENV_KEY_RE.match(k):
+            print("[WARN] ignoring invalid key name in %s: %r" % (path, k), file=sys.stderr)
+            continue
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            v = v[1:-1]
+        if k not in os.environ:
+            os.environ[k] = v
+
+
+_load_env_file()
+
 
 # --- Sakura AI Engine (OpenAI-compatible) ---
 SAKURA_BASE_URL = os.environ.get("SAKURA_AI_BASE_URL", "https://api.ai.sakura.ad.jp/v1")

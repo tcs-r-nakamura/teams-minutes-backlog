@@ -15,3 +15,10 @@ AddLast=true
 # where recordings are stored (shared for the team). Update it here if the
 # recording folder ever changes.
 RecFolderUrl=https://tcs-s.cybozu.com/o/ag.cgi?page=FileIndex&fCID=45883
+
+# AI draft generation via Sakura AI Engine (OpenAI-compatible Chat Completions).
+# These are non-secret. The token is per-user via the environment variable:
+#     setx SAKURA_AI_TOKEN "<UUID>:<secret>"
+# Do NOT write the token into this file.
+SakuraBaseUrl=https://api.ai.sakura.ad.jp/v1
+SakuraModel=gpt-oss-120b

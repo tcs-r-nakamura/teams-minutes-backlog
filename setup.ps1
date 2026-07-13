@@ -119,7 +119,7 @@ if ((Test-Path $modelPath) -and ((Get-Item $modelPath).Length -gt 1GB)) {
 
 # 5) Deploy scripts/template and names.txt into C:\minutes (from next to this setup.ps1)
 Write-Host "[5/5] Deploying scripts / template ..." -ForegroundColor Cyan
-foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "run.ps1", "prompt_template.txt", "backlog.config.sample.txt")) {
+foreach ($f in @("transcribe.ps1", "buildprompt.ps1", "register.ps1", "run.ps1", "draft.ps1", "prompt_template.txt", "backlog.config.sample.txt")) {
     $src = Join-Path $PSScriptRoot $f
     if (Test-Path $src) {
         Copy-Item -LiteralPath $src -Destination "$base\$f" -Force
@@ -139,6 +139,19 @@ if (Test-Path $srcNames) {
     }
 }
 
+# Speaker-name overrides (e.g. add a half-width space to a name Teams stores
+# without one). Keep any existing file so local edits are preserved.
+$srcAlias = Join-Path $PSScriptRoot "speaker_aliases.txt"
+$dstAlias = "$base\speaker_aliases.txt"
+if (Test-Path $srcAlias) {
+    if (Test-Path $dstAlias) {
+        Write-Host "  speaker_aliases.txt already present - keep (not overwritten)" -ForegroundColor DarkGray
+    } else {
+        Copy-Item -LiteralPath $srcAlias -Destination $dstAlias -Force
+        Write-Host "  speaker_aliases.txt -> $base" -ForegroundColor DarkGray
+    }
+}
+
 # Create the live Backlog config from the shared sample (keep any existing one,
 # since a user may have added notes; the API key is never stored here anyway).
 $srcCfgSample = Join-Path $PSScriptRoot "backlog.config.sample.txt"
@@ -146,18 +159,20 @@ $dstCfg       = "$base\backlog.config.txt"
 if (Test-Path $srcCfgSample) {
     if (Test-Path $dstCfg) {
         Write-Host "  backlog.config.txt already present - keep (not overwritten)" -ForegroundColor DarkGray
-        # Migrate configs from the pre-RecFolderUrl (meeting.txt) design: append
-        # the non-secret recording-link key from the sample if it is missing, so
-        # the recording link does not end up blank in the generated prompt.
-        $hasRec = $false
-        foreach ($line in (Get-Content $dstCfg -Encoding UTF8)) {
-            if ($line -match '^\s*RecFolderUrl\s*=') { $hasRec = $true; break }
-        }
-        if (-not $hasRec) {
-            $recLine = Get-Content $srcCfgSample -Encoding UTF8 | Where-Object { $_ -match '^\s*RecFolderUrl\s*=' } | Select-Object -First 1
-            if ($recLine) {
-                Add-Content -Path $dstCfg -Value $recLine -Encoding UTF8
-                Write-Host "  backlog.config.txt: added missing RecFolderUrl (migrated)" -ForegroundColor DarkGray
+        # Migrate older configs: append any non-secret keys that newer versions
+        # added (RecFolderUrl for the recording link; SakuraBaseUrl/SakuraModel for
+        # the AI draft API) from the sample if they are missing, so nothing ends up
+        # blank at runtime. Existing values are never overwritten.
+        $existing = Get-Content $dstCfg -Encoding UTF8
+        foreach ($key in @("RecFolderUrl", "SakuraBaseUrl", "SakuraModel")) {
+            $has = $false
+            foreach ($line in $existing) { if ($line -match ('^\s*' + $key + '\s*=')) { $has = $true; break } }
+            if (-not $has) {
+                $sampleLine = Get-Content $srcCfgSample -Encoding UTF8 | Where-Object { $_ -match ('^\s*' + $key + '\s*=') } | Select-Object -First 1
+                if ($sampleLine) {
+                    Add-Content -Path $dstCfg -Value $sampleLine -Encoding UTF8
+                    Write-Host ("  backlog.config.txt: added missing " + $key + " (migrated)") -ForegroundColor DarkGray
+                }
             }
         }
     } else {
@@ -175,6 +190,8 @@ if (Test-Path "$base\transcribe.ps1") { Write-Host "  transcribe.ps1: OK" -Foreg
 if (Test-Path "$base\buildprompt.ps1") { Write-Host "  buildprompt.ps1: OK" -ForegroundColor Green } else { Write-Host "  buildprompt.ps1: NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\register.ps1") { Write-Host "  register.ps1  : OK" -ForegroundColor Green } else { Write-Host "  register.ps1  : NOT deployed" -ForegroundColor Yellow }
 if (Test-Path "$base\run.ps1") { Write-Host "  run.ps1       : OK" -ForegroundColor Green } else { Write-Host "  run.ps1       : NOT deployed" -ForegroundColor Yellow }
+if (Test-Path "$base\draft.ps1") { Write-Host "  draft.ps1     : OK" -ForegroundColor Green } else { Write-Host "  draft.ps1     : NOT deployed" -ForegroundColor Yellow }
+if (Test-Path "$base\speaker_aliases.txt") { Write-Host "  speaker_aliases: OK" -ForegroundColor Green } else { Write-Host "  speaker_aliases: (none - optional)" -ForegroundColor DarkGray }
 if (Test-Path "$base\backlog.config.txt") {
     Write-Host "  backlog.config: OK (set BACKLOG_API_KEY env var per user)" -ForegroundColor Green
     # Warn if the kept config still has placeholder/empty required values.

@@ -8,6 +8,9 @@
 #   -To prompt   (default) : transcribe -> build the AI prompt, then STOP at the
 #                            manual gate (paste into the approved AI, save the
 #                            minutes as work\minutes.md, do the Step 6 review).
+#   -To draft              : transcribe -> build the prompt -> call the approved
+#                            AI API (Sakura AI Engine) to produce work\minutes.md,
+#                            then STOP for the human pre-publication review.
 #   -To register           : register the reviewed work\minutes.md to Backlog.
 #
 # Future: when an approved AI API is available, a "draft" stage (sendprompt.ps1)
@@ -17,7 +20,7 @@
 # -Fetch moves the newest just-downloaded file from your Downloads folder into
 # work, so you do not move/save it by hand (Cybozu / the AI download click stays
 # manual - there is no API for it):
-#   -To prompt   -Fetch : newest .mp4 -> work
+#   -To prompt   -Fetch : newest .mp4 (+ matching Teams .vtt) -> work
 #   -To register -Fetch : newest .md  -> work\minutes.md
 #
 # Run:
@@ -32,7 +35,7 @@
 # =====================================================================
 
 param(
-    [ValidateSet("prompt","register")]
+    [ValidateSet("prompt","draft","register")]
     [string]$To = "prompt",
     [switch]$Force,
     [switch]$Fetch
@@ -82,11 +85,56 @@ function Fetch-Recording {
     try {
         Move-Item -LiteralPath $mp4.FullName -Destination $dest -Force -ErrorAction Stop
         Write-Host ("Fetched: " + $mp4.Name + "  (" + $mp4.LastWriteTime + ")  -> work") -ForegroundColor Cyan
-        return $true
     } catch {
         Write-Host ("[ERROR] could not move recording to work: " + $_) -ForegroundColor Red
         return $false
     }
+
+    # Also fetch the matching Teams transcript (.vtt) for the SAME meeting, keyed
+    # by the YYYYMMDD_HHMMSS token in the recording name (both files carry it), so
+    # an unrelated .vtt is never grabbed. This is optional: no matching .vtt just
+    # means whisper-only. The fetched file is saved as teams_<token>.vtt so that
+    # transcribe.ps1 selects it strictly by this meeting's token (never a leftover
+    # from a previous meeting). Clear any previously-fetched teams_*.vtt first.
+    Get-ChildItem "$base\work\teams_*.vtt" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    if ($mp4.Name -match '([0-9]{8}_[0-9]{6})') {
+        $token = $matches[1]
+        $teamsDest = "$base\work\teams_" + $token + ".vtt"
+        # Only accept a .vtt that carries the same meeting token AND looks like a
+        # real Teams transcript (first non-empty line is the WEBVTT header, plus a
+        # "<v Speaker>" voice cue), so a same-dated but unrelated / non-transcript
+        # .vtt is not grabbed by mistake.
+        $vtt = Get-ChildItem "$dl\*.vtt" -ErrorAction SilentlyContinue |
+               Where-Object { $_.Name -like ("*" + $token + "*") } |
+               Sort-Object LastWriteTime -Descending |
+               Where-Object {
+                   $firstSeen = $false; $hdrOk = $false; $voice = $false
+                   try {
+                       foreach ($l in (Get-Content -LiteralPath $_.FullName -Encoding UTF8 -TotalCount 400 -ErrorAction Stop)) {
+                           if (-not $firstSeen) {
+                               if ($l.Trim() -eq "") { continue }
+                               $firstSeen = $true
+                               if ($l -match '^\s*WEBVTT') { $hdrOk = $true } else { break }
+                               continue
+                           }
+                           if ($l -match '<v\s+[^>]+>') { $voice = $true; break }
+                       }
+                   } catch {}
+                   ($hdrOk -and $voice)
+               } |
+               Select-Object -First 1
+        if ($vtt) {
+            try {
+                Move-Item -LiteralPath $vtt.FullName -Destination $teamsDest -Force -ErrorAction Stop
+                Write-Host ("Fetched: " + $vtt.Name + "  -> work\" + (Split-Path $teamsDest -Leaf)) -ForegroundColor Cyan
+            } catch {
+                Write-Host ("[WARN] found a Teams .vtt but could not move it (using whisper only): " + $_) -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "[NOTE] No matching Teams .vtt in Downloads; using whisper only." -ForegroundColor DarkGray
+        }
+    }
+    return $true
 }
 
 # -Fetch (register): move the newest .md from Downloads into work\minutes.md, so
@@ -141,6 +189,51 @@ if ($To -eq "prompt") {
     Write-Host "2) Do the pre-publication review (Step 6)." -ForegroundColor Cyan
     Write-Host "3) Then register:  run.ps1 -To register" -ForegroundColor Cyan
     Write-Host "   (downloaded the .md instead? use:  run.ps1 -To register -Fetch)" -ForegroundColor Cyan
+    exit 0
+}
+
+if ($To -eq "draft") {
+    # Full auto up to the DRAFT: fetch -> transcribe -> build prompt -> call the
+    # approved AI API (Sakura AI Engine) -> work\minutes.md. This replaces the
+    # manual "paste into ChatGPT and download the .md" step. The human
+    # pre-publication review and Backlog registration stay manual (unchanged).
+    if ($Fetch) {
+        if (-not (Fetch-Recording)) {
+            Write-Host "[ERROR] -Fetch failed - stopping so an old recording is not transcribed by mistake." -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    # Stamp the time BEFORE transcribe so we can verify the prompt is freshly
+    # (re)generated this run (below), and never send a stale one to the AI API.
+    $draftStart = Get-Date
+
+    $t = Resolve-Script "transcribe.ps1"
+    if (-not (Test-Path $t)) { Write-Host "[ERROR] transcribe.ps1 not found (run setup.ps1)" -ForegroundColor Red; exit 1 }
+    & $ps -ExecutionPolicy Bypass -File $t -Auto
+    $code = $LASTEXITCODE
+    if ($code -ne 0) { Write-Host ("[ERROR] transcribe stage failed (exit " + $code + ")") -ForegroundColor Red; exit $code }
+
+    # Guard: transcribe.ps1 chains to buildprompt.ps1 to produce work\ai_prompt.txt,
+    # but it does not fail hard if buildprompt.ps1 is missing. Require ai_prompt.txt
+    # to have been (re)written THIS run, so a leftover prompt from a previous meeting
+    # is never sent to the AI by mistake.
+    $promptFile = "$base\work\ai_prompt.txt"
+    if (-not (Test-Path $promptFile) -or (Get-Item $promptFile).LastWriteTime -lt $draftStart) {
+        Write-Host "[ERROR] work\ai_prompt.txt was not regenerated this run - stopping so a stale prompt is not sent to the AI (is buildprompt.ps1 deployed? run setup.ps1)." -ForegroundColor Red
+        exit 1
+    }
+
+    $d = Resolve-Script "draft.ps1"
+    if (-not (Test-Path $d)) { Write-Host "[ERROR] draft.ps1 not found (run setup.ps1)" -ForegroundColor Red; exit 1 }
+    & $ps -ExecutionPolicy Bypass -File $d
+    $code = $LASTEXITCODE
+    if ($code -ne 0) { Write-Host ("[ERROR] draft stage failed (exit " + $code + ")") -ForegroundColor Red; exit $code }
+
+    Write-Host ""
+    Write-Host "=== draft ready - human check required (not automated) ===" -ForegroundColor Cyan
+    Write-Host "1) Open C:\minutes\work\minutes.md and do the pre-publication review (Step B-4)." -ForegroundColor Cyan
+    Write-Host "2) Then register:  run.ps1 -To register" -ForegroundColor Cyan
     exit 0
 }
 

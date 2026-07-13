@@ -1,0 +1,11 @@
+# runtime data (internal info - never commit)
+inbox/
+work/
+out/
+state/
+# Nix
+result
+result-*
+# python
+__pycache__/
+*.pyc

@@ -166,6 +166,155 @@ Write-Host ("Elapsed : {0:00}:{1:00}:{2:00}" -f [math]::Floor($el.TotalHours), $
 Write-Host ("Output  : $work\transcript.txt  ({0} chars)" -f $txt.Length) -ForegroundColor Green
 Write-Host ("          $work\transcript.srt / .vtt (with timestamps)") -ForegroundColor DarkGray
 
+# ---------------------------------------------------------------------
+# Teams transcript (optional, used together with whisper)
+# ---------------------------------------------------------------------
+# If a Teams WEBVTT for THIS recording is present, parse it into speaker-labelled
+# text plus a speaker list. buildprompt.ps1 then sends BOTH the Teams transcript
+# (speaker names authoritative) and the whisper transcript (high-accuracy wording)
+# to the AI so they are cross-checked. The .vtt is selected strictly by this
+# recording's YYYYMMDD_HHMMSS token (see below): run.ps1 -Fetch saves the fetched
+# transcript as teams_<token>.vtt, and a manually placed Teams .vtt also carries
+# the token in its name - so a leftover .vtt from a previous meeting is never
+# used. When none is found, remove any stale outputs so an old meeting's speakers
+# are not reused. All Japanese here comes from the .vtt content, never literals.
+# Verify a file really is a Teams WEBVTT transcript: its first non-empty line is
+# the "WEBVTT" header AND it has at least one "<v Speaker>" voice cue. This keeps
+# an unrelated / non-transcript .vtt from being mistaken for one. Head-only read.
+function Test-TeamsVtt($path) {
+    try { $head = Get-Content -LiteralPath $path -Encoding UTF8 -TotalCount 400 -ErrorAction Stop } catch { return $false }
+    $firstSeen = $false; $hdrOk = $false; $hasVoice = $false
+    foreach ($l in $head) {
+        if (-not $firstSeen) {
+            if ($l.Trim() -eq "") { continue }
+            $firstSeen = $true
+            if ($l -match '^\s*WEBVTT') { $hdrOk = $true } else { return $false }
+            continue
+        }
+        if ($l -match '<v\s+[^>]+>') { $hasVoice = $true; break }
+    }
+    return ($hdrOk -and $hasVoice)
+}
+
+$teamsTxt = "$work\transcript_teams.txt"
+$spkTxt   = "$work\speakers.txt"
+$teamsVtt = $null
+if ($srcKey -match '^[0-9]{8}_[0-9]{6}$') {
+    # Adopt a Teams .vtt only if it (a) is not whisper's own transcript.vtt,
+    # (b) carries THIS recording's YYYYMMDD_HHMMSS token in its name, and (c) is a
+    # real Teams WEBVTT. Keying strictly on the token (no untokened canonical file)
+    # means a leftover .vtt from a previous meeting is never mixed with this
+    # recording's whisper result - this holds for BOTH the run.ps1 -Fetch path
+    # (which saves the fetched transcript as teams_<token>.vtt) and a manually
+    # placed Teams .vtt (whose original name also contains the token).
+    $cand = @(Get-ChildItem "$work\*.vtt" -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "transcript.vtt" -and $_.Name -like ("*" + $srcKey + "*") } | Sort-Object LastWriteTime -Descending)
+    foreach ($c in $cand) { if (Test-TeamsVtt $c.FullName) { $teamsVtt = $c.FullName; break } }
+}
+if ($teamsVtt -ne $null) {
+    try {
+        $vlines  = Get-Content -LiteralPath $teamsVtt -Encoding UTF8
+
+        # Speaker-name normalization: convert a full-width space (U+3000) between
+        # surname and given name to a half-width space, collapse runs of spaces,
+        # and trim. Then apply optional exact overrides from speaker_aliases.txt
+        # ("raw = display"), e.g. to add a half-width space to a name Teams stores
+        # without one. Keys in the alias file are normalized the same way so they
+        # match regardless of the space width written there. All Japanese lives in
+        # that UTF-8 file, so this .ps1 stays ASCII-only.
+        $fw = [string][char]0x3000
+        $aliasPath = "$base\speaker_aliases.txt"
+        if (-not (Test-Path $aliasPath)) { $aliasPath = Join-Path $PSScriptRoot "speaker_aliases.txt" }
+        $aliases = @{}
+        if (Test-Path $aliasPath) {
+            foreach ($al in (Get-Content $aliasPath -Encoding UTF8)) {
+                if ($al -match '^\s*#') { continue }
+                if ($al -match '^\s*(.+?)\s*=\s*(.+?)\s*$') {
+                    $k = ((($matches[1] -replace $fw, ' ') -replace '\s+', ' ')).Trim()
+                    if ($k -ne "") { $aliases[$k] = $matches[2].Trim() }
+                }
+            }
+        }
+
+        $segs    = New-Object System.Collections.ArrayList
+        $inCue   = $false
+        $curSpk  = ""
+        $curText = ""
+        foreach ($ln in $vlines) {
+            if (-not $inCue) {
+                # Cue payload opens with "<v Speaker Name>text". Blank / cue-id /
+                # timestamp lines between cues fall through and are ignored.
+                if ($ln -match '<v\s+([^>]+)>(.*)') {
+                    $curSpk = ((($matches[1] -replace $fw, ' ') -replace '\s+', ' ')).Trim()
+                    if ($aliases.ContainsKey($curSpk)) { $curSpk = $aliases[$curSpk] }
+                    $rest   = $matches[2]
+                    if ($rest -match '(?s)^(.*?)</v>') {
+                        $tt = ($matches[1] -replace '<[^>]+>', '').Trim()
+                        if ($tt -ne "") { [void]$segs.Add([pscustomobject]@{ Spk = $curSpk; Text = $tt }) }
+                    } else {
+                        $curText = $rest; $inCue = $true   # payload spans more lines
+                    }
+                }
+            } else {
+                if ($ln -match '(?s)^(.*?)</v>') {
+                    $curText += $matches[1]
+                    $tt = ($curText -replace '<[^>]+>', '').Trim()
+                    if ($tt -ne "") { [void]$segs.Add([pscustomobject]@{ Spk = $curSpk; Text = $tt }) }
+                    $inCue = $false; $curText = ""
+                } elseif ($ln.Trim() -eq "") {
+                    # Defensive: a blank line ends the cue even if the closing </v>
+                    # is missing (a WebVTT voice span may run to the cue end with no
+                    # close tag). Without this, a missing tag would swallow the
+                    # following cues' id/timestamp lines into this speaker's text.
+                    $tt = ($curText -replace '<[^>]+>', '').Trim()
+                    if ($tt -ne "") { [void]$segs.Add([pscustomobject]@{ Spk = $curSpk; Text = $tt }) }
+                    $inCue = $false; $curText = ""
+                } else {
+                    # Continuation line of the same cue. Append with NO separator:
+                    # a WebVTT line break inside one cue is display wrapping, and
+                    # Japanese has no word spaces, so joining is correct here (a
+                    # space would insert a spurious gap). Any residual wording issue
+                    # is covered by the whisper transcript, which the AI cross-checks.
+                    $curText += $ln
+                }
+            }
+        }
+        if ($segs.Count -gt 0) {
+            # Merge consecutive same-speaker segments into one paragraph; collect
+            # unique speakers in first-seen order for the "Speaker" field.
+            $sb       = New-Object System.Text.StringBuilder
+            $speakers = New-Object System.Collections.ArrayList
+            $lastSpk  = $null
+            foreach ($s in $segs) {
+                if (-not $speakers.Contains($s.Spk)) { [void]$speakers.Add($s.Spk) }
+                if ($s.Spk -eq $lastSpk) {
+                    # Same speaker, next cue: new line (no name repeat). A newline -
+                    # not empty concatenation - so cue boundaries are kept and text
+                    # from adjacent cues never runs together into one word.
+                    [void]$sb.Append("`r`n" + $s.Text)
+                } else {
+                    if ($lastSpk -ne $null) { [void]$sb.Append("`r`n") }
+                    [void]$sb.Append($s.Spk + ": " + $s.Text)
+                    $lastSpk = $s.Spk
+                }
+            }
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($teamsTxt, $sb.ToString(), $enc)
+            [System.IO.File]::WriteAllText($spkTxt,   ($speakers -join ", "), $enc)
+            Write-Host ""
+            Write-Host ("[Teams] transcript parsed: " + $speakers.Count + " speakers, " + $segs.Count + " segments") -ForegroundColor Green
+            Write-Host ("        speakers: " + ($speakers -join ", ")) -ForegroundColor DarkGray
+        } else {
+            Remove-Item $teamsTxt, $spkTxt -ErrorAction SilentlyContinue
+            Write-Host "[Teams] .vtt found but no speech cues parsed; using whisper only." -ForegroundColor Yellow
+        }
+    } catch {
+        Remove-Item $teamsTxt, $spkTxt -ErrorAction SilentlyContinue
+        Write-Host ("[Teams] failed to parse .vtt (" + $_ + "); using whisper only.") -ForegroundColor Yellow
+    }
+} else {
+    Remove-Item $teamsTxt, $spkTxt -ErrorAction SilentlyContinue
+}
+
 # Build the ready-to-send AI prompt (non-interactive; all values auto-filled).
 # Open the finished prompt (ai_prompt.txt) so it is ready to review and paste -
 # this runs even in -Auto mode, so after transcription the prompt pops up.

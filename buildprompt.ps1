@@ -146,10 +146,21 @@ $dateToken = ($autoDate -replace '[^0-9]', '')   # yyyy/MM/dd -> yyyyMMdd
 $blNo      = Get-BacklogMeetingNo $space $projectId $parentId $apiKey $dateToken
 $noSource  = if ($blNo -ne $null) { "Backlog" } else { "local counter" }
 
+# Teams transcript + speaker list (written by transcribe.ps1 when a .vtt exists).
+# When present, the Teams speaker names fill the Speaker field (authoritative) and
+# both transcripts are sent to the AI to cross-check; when absent, whisper only.
+$teamsTxtPath = "$work\transcript_teams.txt"
+$spkTxtPath   = "$work\speakers.txt"
+$teamsText = ""
+$teamsSpk  = ""
+if (Test-Path $teamsTxtPath) { $teamsText = (Get-Content $teamsTxtPath -Encoding UTF8 -Raw) }
+if (Test-Path $spkTxtPath)   { $teamsSpk  = (Get-Content $spkTxtPath   -Encoding UTF8 -Raw).Trim() }
+$hasTeams = ($teamsText.Trim() -ne "")
+
 $no   = if ($blNo -ne $null) { [string]$blNo } else { [string]$autoNo }
 $date = $autoDate
 $link = $defLink
-$spk  = ""
+$spk  = if ($hasTeams) { $teamsSpk } else { "" }   # Teams speakers -> Speaker field
 
 # Persist the LOCAL counter value, keyed to this recording, so the offline
 # fallback stays consistent regardless of what Backlog returned this run. Only
@@ -164,7 +175,16 @@ Write-Host "=== build AI prompt ===" -ForegroundColor Green
 Write-Host ("  Meeting number : " + $no + "  (from " + $noSource + ")")
 Write-Host ("  Meeting date   : " + $date)
 Write-Host ("  Recording link : " + $link)
-Write-Host ("  Speaker        : " + $spk + "  (blank -> AI infers)")
+if ($hasTeams) {
+    Write-Host ("  Speaker        : " + $spk + "  (from Teams transcript)")
+} else {
+    Write-Host ("  Speaker        : " + $spk + "  (blank -> AI infers)")
+}
+if ($hasTeams) {
+    Write-Host "  Transcript     : Teams + whisper (cross-checked)" -ForegroundColor Green
+} else {
+    Write-Host "  Transcript     : whisper only (no Teams .vtt)" -ForegroundColor DarkGray
+}
 if ($link -eq "") { Write-Host "[WARN] Link is blank - add RecFolderUrl to backlog.config.txt." -ForegroundColor Yellow }
 if ($blNo -eq $null) { Write-Host "[NOTE] Meeting number is from the local counter (Backlog not reachable / no API key), so it may not match the true number on a fresh setup. Set BACKLOG_API_KEY for the correct number." -ForegroundColor DarkGray }
 
@@ -172,12 +192,20 @@ $tplText = Get-Content $tpl -Encoding UTF8 -Raw
 $txt     = Get-Content $txtPath -Encoding UTF8 -Raw
 
 # Literal string replace (.Replace, NOT -replace) so URLs containing $ & % are safe.
+# Teams transcript block: the parsed text when present, else an ASCII "(none)"
+# marker (kept ASCII so this .ps1 stays ASCII-only; the template's Japanese guide
+# tells the AI that "(none)" means "use whisper only").
+$teamsBlock = if ($hasTeams) { $teamsText } else { "(none)" }
+
 $out = $tplText
-$out = $out.Replace('{{MEETING_NO}}',   $no)
-$out = $out.Replace('{{MEETING_DATE}}', $date)
-$out = $out.Replace('{{REC_LINK}}',     $link)
-$out = $out.Replace('{{SPEAKER}}',      $spk)
-$out = $out.Replace('{{TRANSCRIPT}}',   $txt)
+$out = $out.Replace('{{MEETING_NO}}',         $no)
+$out = $out.Replace('{{MEETING_DATE}}',       $date)
+$out = $out.Replace('{{REC_LINK}}',           $link)
+$out = $out.Replace('{{SPEAKER}}',            $spk)
+$out = $out.Replace('{{TEAMS_TRANSCRIPT}}',   $teamsBlock)
+$out = $out.Replace('{{WHISPER_TRANSCRIPT}}', $txt)
+# Back-compat: if an old template still uses {{TRANSCRIPT}}, fill it with whisper.
+$out = $out.Replace('{{TRANSCRIPT}}',         $txt)
 
 # Write UTF-8 without BOM
 [System.IO.File]::WriteAllText($outPath, $out, (New-Object System.Text.UTF8Encoding($false)))

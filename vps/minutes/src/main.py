@@ -188,7 +188,8 @@ def main(argv=None):
     r.add_argument("--dry-run", action="store_true", help="check only, do not send")
     r.add_argument("--force", action="store_true", help="skip the confirm prompt")
     r.add_argument("--allow-unchecked", action="store_true",
-                   help="proceed even if the duplicate/number check could not run")
+                   help="proceed even if the duplicate check could not run, "
+                        "OR a number conflict was detected (safety override; use with care)")
     r.set_defaults(func=cmd_register)
 
     args = ap.parse_args(argv)

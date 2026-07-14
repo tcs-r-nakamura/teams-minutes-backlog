@@ -90,15 +90,18 @@ def normalize_md(text):
     appends hard-break "  " and skips the blank line after ### sub-headings), so
     enforce them in code:
       - strip trailing whitespace on every line (removes stray hard breaks)
+      - remove bold markers ** (house style is no bold; the model keeps adding it)
       - ensure exactly one blank line after a heading (##, ### ...)
       - collapse runs of blank lines down to a single blank line
 
     Fenced code blocks (``` / ~~~) are left verbatim: a '# comment' inside code
-    is not a heading, and code whitespace/blank lines are significant.
+    is not a heading, code whitespace/blank lines are significant, and a literal
+    ** in code must not be touched.
     """
     src = text.splitlines()
 
-    # Pass 1: rstrip + insert a blank line after headings (skip inside fences).
+    # Pass 1: rstrip + drop bold + insert a blank line after headings
+    # (skip everything inside fences).
     spaced = []
     in_fence = False
     for i, ln in enumerate(src):
@@ -109,7 +112,7 @@ def normalize_md(text):
         if in_fence:
             spaced.append(ln)  # preserve code lines verbatim
             continue
-        ln = ln.rstrip()
+        ln = ln.rstrip().replace("**", "")  # drop bold markers (house style: no bold)
         spaced.append(ln)
         if HEADING_RE.match(ln):
             nxt = src[i + 1] if i + 1 < len(src) else ""

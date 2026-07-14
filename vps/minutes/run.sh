@@ -39,8 +39,22 @@ else
   echo "[WARN] inbox/ に字幕(.vtt)がありません。whisper のみで下書きします（登壇者は空欄）。" >&2
 fi
 
+# 録画リンク: Cybozuの録画ファイルID(fFID)か動画URLを受け取り、議事録を直リンクにする。
+# 数字だけなら fFID として直リンクを組み立て、URLならそのまま、空欄ならフォルダの既定リンク。
+link_opt=()
+if [ -t 0 ]; then   # 対話端末のときだけ尋ねる（非対話実行ではフォルダ既定リンク）
+  read -rp "録画リンク（CybozuのファイルID(fFID) か 動画URL、空欄=フォルダのまま）: " rec_ref || rec_ref=""
+  if [ -n "${rec_ref}" ]; then
+    if [[ "${rec_ref}" =~ ^[0-9]+$ ]]; then
+      link_opt=(--fid "${rec_ref}")
+    else
+      link_opt=(--link "${rec_ref}")
+    fi
+  fi
+fi
+
 echo "[run] draft: ${rec} ${vtt_opt[*]:-（字幕なし）}"
-python -m src.main draft "${rec}" "${vtt_opt[@]}" "$@"
+python -m src.main draft "${rec}" "${vtt_opt[@]}" "${link_opt[@]}" "$@"
 
 # draft が成功した時だけ（set -e により失敗時はここに来ない）、使った入力を
 # processed/ へ退避する。次の会議のために inbox を自動で空にするのが目的。

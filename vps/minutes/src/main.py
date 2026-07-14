@@ -50,6 +50,10 @@ def cmd_draft(args):
     if lock == "BUSY":
         print(_BUSY_MSG, file=sys.stderr)
         return 1
+    if args.fid and not str(args.fid).isdigit():
+        print("[ERROR] --fid は数字のみ（CybozuのfFID）で指定してください: %r" % args.fid,
+              file=sys.stderr)
+        return 1
     os.makedirs(config.WORK_DIR, exist_ok=True)
     os.makedirs(config.OUT_DIR, exist_ok=True)
 
@@ -115,7 +119,19 @@ def cmd_draft(args):
     # 4) build prompt + generate draft
     with open(args.template, encoding="utf-8") as f:
         template = f.read()
-    rec_link = args.link or config.REC_FOLDER_URL
+    # Recording link priority: explicit --link > --fid (build a direct file link)
+    # > the fixed folder default.
+    if args.link:
+        rec_link = args.link
+    elif args.fid:
+        try:
+            rec_link = config.REC_FILE_URL_TEMPLATE.format(fid=args.fid)
+        except (KeyError, IndexError, ValueError) as e:
+            print("[ERROR] REC_FILE_URL_TEMPLATE の書式が不正です（{fid} 以外の波括弧？）: %s"
+                  % e, file=sys.stderr)
+            return 1
+    else:
+        rec_link = config.REC_FOLDER_URL
     glossary = prompt.load_glossary(args.glossary)
     p = prompt.build(template, meeting_no, meeting_date, rec_link, speaker_field,
                      teams_text, whisper_text, glossary)
@@ -224,7 +240,9 @@ def main(argv=None):
     d.add_argument("--vtt", default=None, help="Teams transcript (.vtt), optional")
     d.add_argument("--no", default="要確認", help="meeting number (default: 要確認)")
     d.add_argument("--date", default=None, help="override meeting date YYYY/MM/DD")
-    d.add_argument("--link", default=None, help="override recording link")
+    d.add_argument("--link", default=None, help="override recording link (full URL)")
+    d.add_argument("--fid", default=None,
+                   help="Cybozu recording file id (fFID); builds a direct file link")
     d.add_argument("--template", default=config.PROMPT_TEMPLATE)
     d.add_argument("--aliases", default=config.SPEAKER_ALIASES)
     d.add_argument("--glossary", default=config.GLOSSARY,

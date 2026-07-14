@@ -116,9 +116,16 @@ BACKLOG_PROJECT_ID = os.environ.get("BACKLOG_PROJECT_ID", "520525")
 BACKLOG_PARENT_ID = os.environ.get("BACKLOG_PARENT_ID", "019f3bd7c41e77b78709ccf2885a1175")
 BACKLOG_ADD_LAST = os.environ.get("BACKLOG_ADD_LAST", "true")
 
-# Default recording link (Cybozu shared folder) written into the minutes.
+# Default recording link (Cybozu shared FOLDER) written into the minutes when no
+# per-meeting file link is given.
 REC_FOLDER_URL = os.environ.get(
     "REC_FOLDER_URL", "https://tcs-s.cybozu.com/o/ag.cgi?page=FileIndex&fCID=45883"
+)
+# Direct-FILE link template; {fid} is the Cybozu file id (fFID). draft --fid <N>
+# fills this in so the minutes link straight to that meeting's recording.
+REC_FILE_URL_TEMPLATE = os.environ.get(
+    "REC_FILE_URL_TEMPLATE",
+    "https://tcs-s.cybozu.com/o/ag.cgi?page=FileView&fCID=45883&fFID={fid}",
 )
 
 # --- Audio chunking (Sakura Whisper limit: 30 min / 30 MB per request) ---

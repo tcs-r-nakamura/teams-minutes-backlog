@@ -41,7 +41,8 @@ nix run .#minutes -- draft inbox/xxx.mp4 --vtt inbox/xxx.vtt --no 4
 - `--vtt <path>` Teams字幕。あると登壇者が自動で入り、whisperと突き合わせ。
 - `--no <N>` 会議番号（未指定は「要確認」。Backlog自動採番は今後移植）。
 - `--date YYYY/MM/DD` 開催日の上書き（既定は録画ファイル名の日時から）。
-- `--link <URL>` 録画リンクの上書き（既定は共有フォルダURL）。
+- `--fid <fFID>` Cybozu録画の直リンクを組み立て（`REC_FILE_URL_TEMPLATE`）。数字のみ。
+- `--link <URL>` 録画リンクを完全URLで上書き。優先順位は `--link` > `--fid` > 既定（共有フォルダURL）。
 
 ## 構成
 ```

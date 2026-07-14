@@ -23,13 +23,43 @@ def date_from_filename(name):
     return None, None
 
 
-def build(template, meeting_no, meeting_date, rec_link, speaker, teams_text, whisper_text):
+def load_glossary(path):
+    """Read glossary.txt -> a bullet block for the prompt (or '' if none).
+
+    Plain lines are canonical spellings; 'wrong = right' lines are explicit
+    corrections. Lets the model fix transcription noise (e.g. 'MPフォー' -> 'MP4')
+    to house-standard terms instead of us hard-coding every mis-hearing.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.readlines()
+    except FileNotFoundError:
+        return ""
+    items = []
+    for line in raw:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            wrong, right = line.split("=", 1)
+            wrong, right = wrong.strip(), right.strip()
+            if wrong and right:
+                items.append("- 「%s」は「%s」と表記する" % (wrong, right))
+        else:
+            items.append("- %s" % line)
+    return "\n".join(items)
+
+
+def build(template, meeting_no, meeting_date, rec_link, speaker, teams_text,
+          whisper_text, glossary=""):
     teams_block = teams_text.strip() if (teams_text and teams_text.strip()) else "(none)"
+    glossary_block = glossary.strip() if (glossary and glossary.strip()) else "(用語集は指定なし)"
     out = template
     out = out.replace("{{MEETING_NO}}", str(meeting_no))
     out = out.replace("{{MEETING_DATE}}", meeting_date)
     out = out.replace("{{REC_LINK}}", rec_link)
     out = out.replace("{{SPEAKER}}", speaker)
+    out = out.replace("{{GLOSSARY}}", glossary_block)
     out = out.replace("{{TEAMS_TRANSCRIPT}}", teams_block)
     out = out.replace("{{WHISPER_TRANSCRIPT}}", whisper_text)
     out = out.replace("{{TRANSCRIPT}}", whisper_text)  # back-compat

@@ -87,8 +87,9 @@ def cmd_draft(args):
     with open(args.template, encoding="utf-8") as f:
         template = f.read()
     rec_link = args.link or config.REC_FOLDER_URL
+    glossary = prompt.load_glossary(args.glossary)
     p = prompt.build(template, meeting_no, meeting_date, rec_link, speaker_field,
-                     teams_text, whisper_text)
+                     teams_text, whisper_text, glossary)
     print("[4/4] generating draft (Sakura Chat, model=%s) ..." % config.CHAT_MODEL, flush=True)
     content = prompt.strip_code_fence(sakura.chat(p, model=config.CHAT_MODEL))
     if not content.strip():
@@ -193,6 +194,8 @@ def main(argv=None):
     d.add_argument("--link", default=None, help="override recording link")
     d.add_argument("--template", default=config.PROMPT_TEMPLATE)
     d.add_argument("--aliases", default=config.SPEAKER_ALIASES)
+    d.add_argument("--glossary", default=config.GLOSSARY,
+                   help="term glossary for fixing transcription errors")
     d.add_argument("--out", default=None, help="output .md path")
     d.set_defaults(func=cmd_draft)
 

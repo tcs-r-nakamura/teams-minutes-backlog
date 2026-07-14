@@ -132,5 +132,6 @@ SILENCE_SEARCH_WINDOW = int(os.environ.get("SILENCE_SEARCH_WINDOW", str(3 * 60))
 # Paths (relative to the project dir).
 PROMPT_TEMPLATE = os.environ.get("PROMPT_TEMPLATE", "prompts/prompt_template.txt")
 SPEAKER_ALIASES = os.environ.get("SPEAKER_ALIASES", "speaker_aliases.txt")
+GLOSSARY = os.environ.get("GLOSSARY", "glossary.txt")
 WORK_DIR = os.environ.get("WORK_DIR", "work")
 OUT_DIR = os.environ.get("OUT_DIR", "out")

@@ -20,7 +20,36 @@ import sys
 from . import audio, backlog, config, prompt, sakura, vtt
 
 
+def _acquire_singleton_lock():
+    """Prevent two concurrent draft/register runs from clobbering the shared
+    work/ and out/minutes.md on the shared 'aiocr' account.
+
+    Returns an open file handle (lock held; keep it referenced), the string
+    "BUSY" if another run already holds it, or None if file locking is
+    unavailable (non-Unix) so the caller just proceeds.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return None  # e.g. Windows: no advisory locking, run unlocked
+    fh = open(".minutes.lock", "w")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return "BUSY"
+    return fh
+
+
+_BUSY_MSG = ("[ERROR] 別の処理が実行中です（draft/register）。共有環境のため、"
+             "1会議ずつ順番に実行してください。")
+
+
 def cmd_draft(args):
+    lock = _acquire_singleton_lock()
+    if lock == "BUSY":
+        print(_BUSY_MSG, file=sys.stderr)
+        return 1
     os.makedirs(config.WORK_DIR, exist_ok=True)
     os.makedirs(config.OUT_DIR, exist_ok=True)
 
@@ -122,6 +151,10 @@ def _title_from_md(content):
 
 def cmd_register(args):
     """Register a human-reviewed minutes .md to Backlog (draft -> check -> here)."""
+    lock = _acquire_singleton_lock()
+    if lock == "BUSY":
+        print(_BUSY_MSG, file=sys.stderr)
+        return 1
     md = args.md or os.path.join(config.OUT_DIR, "minutes.md")
     if not os.path.exists(md):
         print("[ERROR] minutes not found: %s" % md, file=sys.stderr)

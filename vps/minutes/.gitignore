@@ -4,6 +4,8 @@ processed/
 work/
 out/
 state/
+# concurrency lock (shared aiocr account)
+.minutes.lock
 # secrets (tokens) - keep in ~/.config/minutes.env, never in the repo
 *.env
 minutes.env

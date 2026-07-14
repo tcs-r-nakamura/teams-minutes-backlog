@@ -1,0 +1,3 @@
+# VPS(Linux)で実行するファイルは改行をLFに固定する。
+# Windows(CRLF)のままscp/cloneするとbashのシェバングが壊れるため。
+*.sh text eol=lf

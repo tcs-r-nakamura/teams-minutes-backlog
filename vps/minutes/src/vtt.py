@@ -61,7 +61,12 @@ def is_teams_vtt(path):
 
 
 def parse(path, aliases=None):
-    """Return (body_text, speakers_list)."""
+    """Return (body_text, speakers_list, char_counts).
+
+    char_counts maps each speaker -> total characters spoken, a proxy for how
+    much they spoke. Used to pick the single main speaker for the 登壇者 field
+    while keeping everyone in the transcript body.
+    """
     aliases = aliases or {}
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
@@ -108,7 +113,9 @@ def parse(path, aliases=None):
 
     merged = []
     speakers = []
+    chars = {}
     for spk, text in segs:
+        chars[spk] = chars.get(spk, 0) + len(text)
         if spk not in speakers:
             speakers.append(spk)
         if merged and merged[-1][0] == spk:
@@ -116,4 +123,4 @@ def parse(path, aliases=None):
         else:
             merged.append([spk, text])
     body = "\n".join("%s: %s" % (spk, text) for spk, text in merged)
-    return body, speakers
+    return body, speakers, chars

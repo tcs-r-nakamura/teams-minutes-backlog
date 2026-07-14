@@ -60,15 +60,28 @@ def cmd_draft(args):
     # 3) Teams transcript
     teams_text = ""
     speakers = []
+    chars = {}
     if args.vtt:
         if not vtt.is_teams_vtt(args.vtt):
             print("[WARN] %s does not look like a Teams WEBVTT; ignoring." % args.vtt,
                   file=sys.stderr)
         else:
             aliases = vtt.load_aliases(args.aliases)
-            teams_text, speakers = vtt.parse(args.vtt, aliases)
+            teams_text, speakers, chars = vtt.parse(args.vtt, aliases)
             print("[3/4] Teams transcript: %d speakers" % len(speakers), flush=True)
-    speaker_field = ", ".join(speakers)
+
+    # 登壇者 = the single person who spoke the most (by total characters).
+    # Everyone else stays in the transcript body but is not listed as 登壇者.
+    # No Teams transcript -> leave it empty and let the template decide.
+    speaker_field = ""
+    if speakers:
+        top = max(speakers, key=lambda s: chars.get(s, 0))  # ties -> first appearance
+        speaker_field = top
+        others = [s for s in speakers if s != top]
+        print("      登壇者(発言最多): %s (%d字)%s"
+              % (top, chars.get(top, 0),
+                 ("／他は本文のみ: " + ", ".join(others)) if others else ""),
+              flush=True)
 
     # 4) build prompt + generate draft
     with open(args.template, encoding="utf-8") as f:

@@ -42,6 +42,19 @@ fi
 echo "[run] draft: ${rec} ${vtt_opt[*]:-（字幕なし）}"
 python -m src.main draft "${rec}" "${vtt_opt[@]}" "$@"
 
+# draft が成功した時だけ（set -e により失敗時はここに来ない）、使った入力を
+# processed/ へ退避する。次の会議のために inbox を自動で空にするのが目的。
+# 削除ではなく移動。PC/サイボウズに原本があるのでこれ自体が最終保管ではない。
+# 日時プレフィックスで退避先を一意化（同名録画の再実行でも上書きしない＝後から参照可）。
+archive="processed/$(date +%Y%m%d_%H%M%S)_$(basename "${rec%.*}")"
+mkdir -p "${archive}"
+if [ ${#vtts[@]} -eq 1 ]; then
+  mv -f "${rec}" "${vtts[0]}" "${archive}/"   # 録画+字幕をまとめて移動（部分退避を避ける）
+else
+  mv -f "${rec}" "${archive}/"
+fi
+echo "[done] 使った入力を ${archive}/ へ移動しました（inbox は次の会議用に空になりました）。"
+
 echo
 echo "[next] out/minutes.md を人がチェック・修正 → 問題なければ登録:"
 echo "         python -m src.main register --dry-run   # まず確認（送らない）"

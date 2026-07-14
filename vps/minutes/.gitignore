@@ -1,5 +1,6 @@
 # runtime data (internal info - never commit)
 inbox/
+processed/
 work/
 out/
 state/

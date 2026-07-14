@@ -94,6 +94,7 @@ def cmd_draft(args):
     if not content.strip():
         print("[ERROR] empty response from the model.", file=sys.stderr)
         return 1
+    content = prompt.normalize_md(content)  # enforce house-style formatting deterministically
 
     out_path = args.out or os.path.join(config.OUT_DIR, "minutes.md")
     with open(out_path, "w", encoding="utf-8") as f:

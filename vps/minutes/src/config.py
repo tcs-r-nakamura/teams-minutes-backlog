@@ -80,6 +80,26 @@ def _load_env_file():
 _load_env_file()
 
 
+def token_problem(name, value):
+    """Return a human-readable reason a token is unusable, or None if it is
+    empty (not configured -> the caller handles that) or looks fine.
+
+    Catches the common setup mistake of leaving the ＜...＞ placeholder in
+    minutes.env: an unreplaced placeholder otherwise dies deep inside requests
+    with an opaque latin-1 UnicodeEncodeError (Sakura), or fails auth silently
+    and shows up only as '要確認' / 'duplicate check could not run' (Backlog).
+    """
+    if not value:
+        return None  # unset == not configured; each caller reports that itself
+    if not value.isascii():
+        return ("%s に非ASCII文字が含まれています（全角の ＜ ＞ や日本語？）。"
+                "~/.config/minutes.env に本物のトークンを設定してください。" % name)
+    if any(c in "<>" or c.isspace() for c in value):
+        return ("%s に '<' '>' か空白が含まれています（プレースホルダのままか貼り間違い）。"
+                "~/.config/minutes.env に本物のトークンを設定してください。" % name)
+    return None
+
+
 # --- Sakura AI Engine (OpenAI-compatible) ---
 SAKURA_BASE_URL = os.environ.get("SAKURA_AI_BASE_URL", "https://api.ai.sakura.ad.jp/v1")
 SAKURA_TOKEN = os.environ.get("SAKURA_AI_TOKEN", "")

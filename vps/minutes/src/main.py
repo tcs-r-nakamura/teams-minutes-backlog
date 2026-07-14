@@ -206,6 +206,17 @@ def main(argv=None):
     r.set_defaults(func=cmd_register)
 
     args = ap.parse_args(argv)
+
+    # Fail fast with a clear message if a token is set but obviously broken
+    # (e.g. the ＜...＞ placeholder left in minutes.env). Empty is allowed here;
+    # each command reports its own "not set" when it actually needs the token.
+    for _name, _val in (("SAKURA_AI_TOKEN", config.SAKURA_TOKEN),
+                        ("BACKLOG_API_KEY", config.BACKLOG_API_KEY)):
+        _problem = config.token_problem(_name, _val)
+        if _problem:
+            print("[ERROR] " + _problem, file=sys.stderr)
+            return 1
+
     return args.func(args)
 
 
